@@ -31,7 +31,8 @@
 ##### ├── data/                      // 数据目录
 ##### │&emsp;   ├── input_videos/         // 存放输入的原始视频的文件夹
 ##### │&emsp;   ├── processed_audio/      // 存放视频转换成的音频文件的文件夹
-##### │&emsp;   ├── output_videos/        // 存放生成的短视频的文件夹
+##### │&emsp;   ├── slice_videos/        // 存放生成的片段短视频的文件夹
+##### │&emsp;   ├── output_videos/        // 存放生成的合并的短视频的文件夹
 ##### │&emsp;   └──……………………………………        // 后续改进新增的文件
 ##### └──………………………… //后续新增文件
 
@@ -41,9 +42,9 @@
 #####    DEEPSEEK_API_KEY,      // DeepSeek API密钥
 #####    DEEPSEEK_BASE_URL      //DeepSeek API地址
 #####    INPUT_VIDEO_DIR,       // 输入视频目录路径
-#####    OUTPUT_VIDEO_DIR,      // 输出视频目录路径
+#####    SLICE_VIDEO_DIR,       // 输出的片段视频目录路径
+#####    OUTPUT_VIDEO_DIR,      // 输出的合并视频目录路径
 #####    PROCESSED_AUDIO_DIR,   // 音频文件路径
-#####    TRANSCRIPTS_DIR,       // 音频转成的文本文件路径
 #####
 ##### 使用示例：from config import DEEPSEEK_API_KEY(其他的全局变量同理使用INPUT_VIDEO_DIR,OUTPUT_VIDEO_DIR,PROCESSED_AUDIO_DIR,TRANSCRIPTS_DIR,PARAFORMER_MODEL)
 ##### video_path = os.path.join(INPUT_VIDEO_DIR, "test.mp4")
