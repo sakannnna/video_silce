@@ -33,6 +33,8 @@
 ##### │&emsp;   ├── processed_audio/      // 存放视频转换成的音频文件的文件夹
 ##### │&emsp;   ├── slice_videos/        // 存放生成的片段短视频的文件夹
 ##### │&emsp;   ├── output_videos/        // 存放生成的合并的短视频的文件夹
+##### │&emsp;   ├── transcripts/        // 存放音频转成的文本的文件夹（以.json形式存储）
+##### │&emsp;   ├── analysis_results/        // 存放LLM分析的结果的文件夹（以.json形式存储）
 ##### │&emsp;   └──……………………………………        // 后续改进新增的文件
 ##### └──………………………… //后续新增文件
 
@@ -45,6 +47,8 @@
 #####    SLICE_VIDEO_DIR,       // 输出的片段视频目录路径
 #####    OUTPUT_VIDEO_DIR,      // 输出的合并视频目录路径
 #####    PROCESSED_AUDIO_DIR,   // 音频文件路径
+#####    ANALYSIS_RESULTS_DIR   //LLM分析结果路径
+#####    TRANSCRIPTS_DIR        //音频转文本存放结果
 #####
 ##### 使用示例：from config import DEEPSEEK_API_KEY(其他的全局变量同理使用INPUT_VIDEO_DIR,OUTPUT_VIDEO_DIR,PROCESSED_AUDIO_DIR,TRANSCRIPTS_DIR,PARAFORMER_MODEL)
 ##### video_path = os.path.join(INPUT_VIDEO_DIR, "test.mp4")
