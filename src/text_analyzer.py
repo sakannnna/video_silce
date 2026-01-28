@@ -1,115 +1,136 @@
 import json
 import os
+import sys
 import requests
 
-# API 配置
-API_KEY = "sk-370cdf2f51a44cccb046967e6869f499"
-API_URL = "https://api.deepseek.com/chat/completions"
+# 将项目根目录添加到系统路径，以便导入 config 和 src
+# 假设当前文件在 src/ 目录下，根目录是上一级
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 假设文件路径
-file_path = os.path.join("data", "transcripts", "text_trans.json")
-
-def load_trans_data():
-    if not os.path.exists(file_path):
-        print(f"文件不存在: {file_path}")
-        return []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return data
-
-def call_deepseek(prompt):
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "You are a helpful video editing assistant. Always output valid JSON."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.1
-    }
-    
+try:
+    from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+    from src.prompts import MAIN_PROMPT_TEMPLATE
+except ImportError:
+    # 尝试直接导入（针对不同运行环境的兼容处理）
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        return result['choices'][0]['message']['content']
-    except Exception as e:
-        print(f"API 调用失败: {e}")
-        return None
+        import config
+        DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
+        DEEPSEEK_BASE_URL = config.DEEPSEEK_BASE_URL
+        from prompts import MAIN_PROMPT_TEMPLATE
+    except ImportError as e:
+        print(f"Warning: Import failed: {e}")
+        DEEPSEEK_API_KEY = ""
+        DEEPSEEK_BASE_URL = ""
+        MAIN_PROMPT_TEMPLATE = ""
 
 class TextAnalyzer:
-    def analyze_transcript(self, transcript_list, user_instruction):
+    """文本分析器，使用DeepSeek API分析转录文本"""
+    
+    def __init__(self):
         """
-        transcript_list: 就是 load_trans_data() 返回的那个列表
-        user_instruction: 用户的命令，如“只要干货”
+        初始化文本分析器
+        设置DeepSeek API的认证信息
+        """
+        self.api_key = DEEPSEEK_API_KEY
+        self.base_url = DEEPSEEK_BASE_URL
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+    def analyze_transcript(self, words, user_instruction) -> list:
+        """
+        分析转录文本，返回推荐的剪辑片段
+        参数Args:
+            words: 带时间戳的单词列表，也就是上一个python源文件的返回结果
+            user_instruction: 用户指令（如"找出最精彩的部分"）
+        返回Returns:
+            列表list: 要剪辑片段列表
+                每个元素字典格式: {
+                    "start_time": float,
+                    "end_time": float,
+                    "reason": str,
+                    "score": int
+                }
         """
         
         # 1. 准备发给 AI 的素材
-        # 我们通常把整个文本拼起来给 AI 看，方便它理解上下文
         context_text = ""
-        for item in transcript_list:
-            # 拼成：[0.0-3.5] 各位评委好...
+        for item in words:
             context_text += f"[{item['start']}-{item['end']}] {item['word']}\n"
 
         # 2. 构造 Prompt
-        # 告诉 AI：根据 context_text 和 user_instruction，给我返回 JSON
-        prompt = f"""
-        你是一个剪辑助手。
-        用户需求：{user_instruction}
-        
-        以下是视频字幕：
-        {context_text}
-        
-        请找出符合需求的片段，根据用户需求对每个片段打分，根据与用户需求的匹配程度从低到高打0-10分，返回 JSON 列表。
-        **重要：请只返回纯 JSON 字符串，不要包含 markdown 代码块标记（如 ```json ... ```）。**
-        
-        返回格式示例：
-        [
-            {{"start": 0.0, "end": 3.5, "score": 10, "reason": "开场白"}},
-            ...
-        ]
-        """
+        if not MAIN_PROMPT_TEMPLATE:
+             print("Error: Prompt template not loaded.")
+             return []
+
+        prompt = MAIN_PROMPT_TEMPLATE.format(
+            user_instruction=user_instruction,
+            context_text=context_text
+        )
 
         # 3. 调用 DeepSeek API
-        print(f"正在根据需求 '{user_instruction}' 分析字幕...")
-        response = call_deepseek(prompt)
+        # 注意：config.py 中 BASE_URL 通常不带 /chat/completions 后缀，需要拼接
+        url = f"{self.base_url}/chat/completions"
         
-        if not response:
-            return []
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "You are a helpful video editing assistant. Always output valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "stream": False
+        }
         
-        # 4. 解析 AI 返回的 JSON 字符串
+        print(f"正在调用 DeepSeek API 分析字幕...")
+        
         try:
-            # 清理可能的 markdown 标记
-            clean_response = response.strip()
+            response = requests.post(url, headers=self.headers, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            
+            # 4. 解析 AI 返回的 JSON 字符串
+            clean_response = content.strip()
             if clean_response.startswith("```"):
                 clean_response = clean_response.split("\n", 1)[1]
                 if clean_response.endswith("```"):
                     clean_response = clean_response.rsplit("\n", 1)[0]
             
-            result_list = json.loads(clean_response) 
-            return result_list 
+            result_list = json.loads(clean_response)
+            return result_list
+            
         except Exception as e:
-            print(f"JSON 解析失败: {e}")
-            print(f"原始返回: {response}")
+            print(f"API 调用或解析失败: {e}")
             return []
 
-# 测试打印
+# 测试代码
 if __name__ == "__main__":
+    # 模拟数据加载路径
+    # 这里的路径需要根据实际运行位置调整，这里假设从项目根目录或src目录运行
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    file_path = os.path.join(base_dir, "data", "transcripts", "text_trans.json")
+    
+    def load_trans_data():
+        if not os.path.exists(file_path):
+            print(f"文件不存在: {file_path}")
+            return []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+
     transcript = load_trans_data()
-    if not transcript:
-        print("未加载到字幕数据，请检查文件路径。")
-    else:
+    if transcript:
         print(f"成功加载 {len(transcript)} 条字幕数据")
         
-        # 假定用户输入
-        user_instruction = "去除无意义的语气词和意外插曲（如翻页笔没电），只保留核心介绍内容。"
-        
         analyzer = TextAnalyzer()
+        # 假定用户输入
+        user_instruction = "去除无意义的语气词和意外插曲，只保留核心介绍内容。"
+        
         results = analyzer.analyze_transcript(transcript, user_instruction)
         
         print("\n--- 分析结果 ---")
         print(json.dumps(results, indent=2, ensure_ascii=False))
+    else:
+        print("未找到测试数据，请检查 data/transcripts/text_trans.json")
