@@ -26,7 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('video_silce.log'),
+        logging.FileHandler('video_silce.log', encoding = 'utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -378,3 +378,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"程序出现未预期的错误: {str(e)}")
         logging.exception("未预期的错误")
+
