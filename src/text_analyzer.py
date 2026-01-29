@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import requests
+import re
 
 # 将项目根目录添加到系统路径，以便导入 config 和 src
 # 假设当前文件在 src/ 目录下，根目录是上一级
