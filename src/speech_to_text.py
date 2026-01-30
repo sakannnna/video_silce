@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import requests
+import re
 from config import DASHSCOPE_API_KEY, TRANSCRIPTS_DIR
 from typing import List, Dict
 import dashscope
@@ -157,6 +158,51 @@ class SpeechToText:
                         data = []
                 break
         return self._normalize(data)
+
+    def split_by_punctuation(self, items):
+        """
+        按标点将 ASR 句子切分成更短的片段（用于视频剪辑）
+        """
+        segments = []
+        punctuation_pattern = r'[，。！？；,.!?;]'
+
+        for item in items:
+            text = item["word"]
+            start = item["start"]
+            end = item["end"]
+
+            duration = end - start
+            if duration <= 0 or not text:
+                continue
+
+            # 按标点切文本（保留顺序）
+            parts = re.split(punctuation_pattern, text)
+            parts = [p.strip() for p in parts if p.strip()]
+
+            if len(parts) == 1:
+                # 没标点，直接返回原句
+                segments.append(item)
+                continue
+
+            total_chars = sum(len(p) for p in parts)
+            current_time = start
+
+            for i, part in enumerate(parts):
+                ratio = len(part) / total_chars
+                part_duration = duration * ratio
+
+                part_start = current_time
+                part_end = end if i == len(parts) - 1 else current_time + part_duration
+
+                segments.append({
+                    "word": part,
+                    "start": round(part_start, 3),
+                    "end": round(part_end, 3)
+                })
+
+                current_time = part_end
+
+        return segments
 
     def _normalize(self, items: List[Dict]) -> List[Dict]:
         result: List[Dict] = []

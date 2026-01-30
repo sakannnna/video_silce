@@ -241,12 +241,13 @@ def main():
         logger.info("步骤5: 语音转文字")
         print("\n[2/5] 正在将音频转换为文字...")
         
-        transcript = speech_to_text.transcribe(audio_path)
-        if not transcript:
+        first_transcript = speech_to_text.transcribe(audio_path)
+        if not first_transcript:
             logger.error("语音转文字失败")
             print("错误: 语音转文字失败")
             return
-        
+        transcript = speech_to_text.split_by_punctuation(first_transcript)
+
         print(f"✓ 语音转文字完成，共识别 {len(transcript)} 个片段")
         
         # 保存转录结果
