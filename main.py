@@ -125,7 +125,31 @@ def get_user_input():
         user_instruction = "找出视频中最精彩的部分"
         print(f"使用默认指令: {user_instruction}")
     
-    return video_filename, user_instruction
+    # 获取最大视频时长
+    print("\n" + "-"*50)
+    print("请设置输出视频的最大时长")
+    print("  - 输入数字（单位：秒），例如：300（5分钟）")
+    print("  - 直接按回车使用默认值：300秒（5分钟）")
+    print("-"*50)
+    
+    max_duration = 300
+    duration_input = input("\n请输入最大时长（秒）: ").strip()
+    
+    if duration_input:
+        try:
+            max_duration = int(duration_input)
+            if max_duration <= 0:
+                print("输入值必须大于0，使用默认值：300秒")
+                max_duration = 300
+            else:
+                print(f"最大时长设置为：{max_duration}秒（{max_duration/60:.1f}分钟）")
+        except ValueError:
+            print("输入无效，使用默认值：300秒")
+            max_duration = 300
+    else:
+        print(f"使用默认值：300秒（5分钟）")
+    
+    return video_filename, user_instruction, max_duration
 
 def save_transcript(transcript, video_name):
     """保存转录文本到文件"""
@@ -199,7 +223,7 @@ def main():
             logger.error("无法获取用户输入，程序退出")
             return
         
-        video_filename, user_instruction = user_input
+        video_filename, user_instruction, max_duration = user_input
         video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
         
         if not os.path.exists(video_path):
@@ -277,6 +301,22 @@ def main():
         
         print(f"✓ 文本分析完成，找到 {len(segments)} 个剪辑片段")
         
+        # 6.1 选择关键片段
+        logger.info("步骤6.1: 选择关键片段")
+        print(f"\n[3.5/5] 正在根据评分选择关键片段...")
+        
+        selected_segments = video_processor.select_key_clips(segments, max_duration)
+        
+        if not selected_segments:
+            logger.warning("未选择到有效的关键片段")
+            print("警告: 未选择到有效的关键片段")
+            return
+        
+        print(f"✓ 已选择 {len(selected_segments)} 个关键片段，总时长约 {max_duration} 秒")
+        
+        # 更新segments为选择后的片段
+        segments = selected_segments
+        
         # 保存分析结果
         # 确保分析结果目录存在
         if not os.path.exists(ANALYSIS_RESULTS_DIR):
@@ -295,7 +335,7 @@ def main():
 
         # 7. 剪辑视频片段
         logger.info("步骤7: 剪辑视频片段")
-        print("\n[4/5] 正在剪辑视频片段...")
+        print("\n[4.5/5] 正在剪辑视频片段...")
         
         clip_paths = []
         for i, segment in enumerate(segments):
@@ -331,8 +371,8 @@ def main():
         
         print(f"✓ 共成功剪辑 {len(clip_paths)} 个片段")
         
-        # 8. 合并剪辑片段
-        logger.info("步骤8: 合并剪辑片段")
+        # 9. 合并剪辑片段
+        logger.info("步骤9: 合并剪辑片段")
         print("\n[5/5] 正在合并剪辑片段...")
         
         output_filename = f"{video_name}_edited.mp4"
