@@ -98,6 +98,40 @@ class VideoProcessor:
             return False
     
     def select_key_clips(self, analyzed_segments, max_duration=300):
+        pass
+
+    def extract_keyframes(self, video_path, output_dir, interval=2.0):
+        """
+        每隔一定时间提取关键帧
+        Args:
+            video_path: 视频路径
+            output_dir: 输出目录
+            interval: 间隔时间(秒)
+        Returns:
+            list: 提取的关键帧文件路径列表 [{"time": float, "path": str}]
+        """
+        keyframes = []
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            # 使用上下文管理器确保资源释放
+            with VideoFileClip(video_path) as clip:
+                duration = clip.duration
+                # 使用 numpy arange 或简单的 while 循环来支持浮点间隔
+                current_time = 0.0
+                while current_time < duration:
+                    frame_name = f"frame_{int(current_time*1000):06d}.jpg"
+                    frame_path = os.path.join(output_dir, frame_name)
+                    
+                    # 保存帧
+                    clip.save_frame(frame_path, t=current_time)
+                    keyframes.append({"time": current_time, "path": frame_path})
+                    
+                    current_time += interval
+                    
+            return keyframes
+        except Exception as e:
+            print(f"提取关键帧失败: {e}")
+            return []
         """
         根据评分选择关键片段
         参数Args:

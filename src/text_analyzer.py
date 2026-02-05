@@ -65,8 +65,25 @@ class TextAnalyzer:
         # 1. 准备发给 AI 的素材
         context_text = ""
         for item in words:
-            t = item.get("text", item.get("word", ""))
-            context_text += f"[{item['start']}-{item['end']}] {t}\n"
+            # 兼容新旧格式
+            if "time_range" in item:
+                # 新格式
+                start = item["time_range"][0]
+                end = item["time_range"][1]
+                content = item.get("content", "")
+                visual = item.get("visual_context", "")
+                type_ = item.get("type", "speech")
+                
+                line = f"[{start:.2f}-{end:.2f}] ({type_}) {content}"
+                if visual:
+                    line += f" | {visual}"
+                context_text += line + "\n"
+            else:
+                # 旧格式
+                start = item.get("start", 0)
+                end = item.get("end", 0)
+                t = item.get("text", item.get("word", ""))
+                context_text += f"[{start}-{end}] {t}\n"
 
         # 2. 构造 Prompt
         if not MAIN_PROMPT_TEMPLATE:

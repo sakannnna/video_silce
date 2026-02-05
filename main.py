@@ -15,11 +15,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 # 导入自定义模块
 from config import (
     INPUT_VIDEO_DIR, OUTPUT_VIDEO_DIR, PROCESSED_AUDIO_DIR,
-    TRANSCRIPTS_DIR, ANALYSIS_RESULTS_DIR, SLICE_VIDEO_DIR
+    TRANSCRIPTS_DIR, ANALYSIS_RESULTS_DIR, SLICE_VIDEO_DIR, KEYFRAMES_DIR
 )
 from src.video_processor import VideoProcessor
 from src.speech_to_text import SpeechToText
 from src.text_analyzer import TextAnalyzer
+from src.visual_recognition import VisualRecognition
+from src.data_merger import merge_audio_visual_data
+import numpy as np
+from PIL import Image
 
 # 设置日志
 logging.basicConfig(
@@ -40,7 +44,8 @@ def ensure_directories():
         PROCESSED_AUDIO_DIR,
         TRANSCRIPTS_DIR,
         ANALYSIS_RESULTS_DIR,
-        SLICE_VIDEO_DIR
+        SLICE_VIDEO_DIR,
+        KEYFRAMES_DIR
     ]
     
     for directory in directories:
@@ -206,6 +211,21 @@ def save_analysis_results(segments, video_name, user_instruction):
         print(f"DEBUG: 保存分析结果失败: {str(e)}")
         return None
 
+def calculate_image_difference(img1_path, img2_path):
+    """计算两张图片的差异 (MSE)"""
+    try:
+        # Resize to small size for fast comparison
+        with Image.open(img1_path) as i1, Image.open(img2_path) as i2:
+            i1 = i1.resize((64, 64)).convert('L')
+            i2 = i2.resize((64, 64)).convert('L')
+            arr1 = np.array(i1)
+            arr2 = np.array(i2)
+            mse = np.mean((arr1 - arr2) ** 2)
+            return mse
+    except Exception as e:
+        logger.warning(f"图片差异计算失败: {e}")
+        return float('inf')
+
 def main():
     """主函数"""
     logger.info("开始视频智能剪辑流程")
@@ -240,6 +260,7 @@ def main():
         video_processor = VideoProcessor()
         speech_to_text = SpeechToText()
         text_analyzer = TextAnalyzer()
+        visual_recognition = VisualRecognition()
         
         print(f"\n{'='*60}")
         print(f"开始处理视频: {video_filename}")
@@ -274,8 +295,63 @@ def main():
 
         print(f"✓ 语音转文字完成，共识别 {len(transcript)} 个片段")
         
+        # 5.5 视觉内容分析 (关键帧提取 + API调用)
+        logger.info("步骤5.5: 视觉内容分析")
+        print("\n[Visual] 正在分析视频画面内容 (这可能需要一些时间)...")
+        
+        # 提取关键帧
+        kf_output_dir = os.path.join(KEYFRAMES_DIR, video_name)
+        # 阶段1 & 2: 基础提取
+        keyframes = video_processor.extract_keyframes(video_path, kf_output_dir, interval=2.0)
+        print(f"提取了 {len(keyframes)} 个潜在关键帧")
+        
+        visual_segments = []
+        last_processed_kf_path = None
+        MSE_THRESHOLD = 50.0  # 差异阈值，低于此值视为画面未变
+        
+        analyzed_count = 0
+        skipped_count = 0
+        
+        print("开始调用视觉模型分析关键帧...")
+        for kf in keyframes:
+            kf_path = kf['path']
+            timestamp = kf['time']
+            
+            # 阶段2: 去重
+            if last_processed_kf_path:
+                mse = calculate_image_difference(last_processed_kf_path, kf_path)
+                if mse < MSE_THRESHOLD:
+                    skipped_count += 1
+                    continue
+            
+            # 阶段1: API调用
+            print(f"  - 分析画面: {timestamp:.1f}s ...", end="\r")
+            description = visual_recognition.analyze_image(kf_path)
+            
+            if description:
+                # 构造与语音转录一致的格式
+                visual_segments.append({
+                    "word": f"[视觉画面: {description}]", # 兼容字段
+                    "text": f"[视觉画面: {description}]",
+                    "start": timestamp,
+                    "end": timestamp + 2.0 # 假设持续时间
+                })
+                last_processed_kf_path = kf_path
+                analyzed_count += 1
+            else:
+                logger.warning(f"Failed to analyze frame at {timestamp}")
+
+        print(f"\n✓ 视觉分析完成: 分析了 {analyzed_count} 帧, 跳过 {skipped_count} 帧 (重复)")
+        
+        # 整合结果 (使用新的融合逻辑)
+        # transcript 是 ASR 结果列表
+        # visual_segments 是视觉结果列表
+        full_transcript = merge_audio_visual_data(transcript, visual_segments)
+        
+        print(f"✓ 结果整合完成，共 {len(full_transcript)} 条记录")
+        
         # 保存转录结果
-        transcript_path = save_transcript(transcript, video_name)
+        transcript_path = save_transcript(full_transcript, video_name)
         
         # 6. 文本分析
         logger.info("步骤6: 文本分析")
