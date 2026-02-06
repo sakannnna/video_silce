@@ -73,7 +73,7 @@ def get_user_input():
     if not video_files:
         print(f"未在 {INPUT_VIDEO_DIR} 目录中找到视频文件。")
         print("请将视频文件放入该目录后重新运行程序。")
-        return None, None
+        return None
     
     # 显示可用的视频文件
     print("\n可用的视频文件:")
@@ -118,46 +118,7 @@ def get_user_input():
         except ValueError:
             print("请输入有效的数字或文件名。")
     
-    # 获取用户指令
-    print("\n" + "-"*50)
-    print("请输入剪辑指令（例如）：")
-    print("  - '找出最精彩的部分'")
-    print("  - '剪出所有讲人工智能的片段'")
-    print("  - '找出笑声最多的地方'")
-    print("  - '提取产品功能介绍的部分'")
-    print("-"*50)
-    
-    user_instruction = input("\n请输入你的剪辑指令: ").strip()
-    
-    if not user_instruction:
-        user_instruction = "找出视频中最精彩的部分"
-        print(f"使用默认指令: {user_instruction}")
-    
-    # 获取最大视频时长
-    print("\n" + "-"*50)
-    print("请设置输出视频的最大时长")
-    print("  - 输入数字（单位：秒），例如：300（5分钟）")
-    print("  - 直接按回车使用默认值：300秒（5分钟）")
-    print("-"*50)
-    
-    max_duration = 300
-    duration_input = input("\n请输入最大时长（秒）: ").strip()
-    
-    if duration_input:
-        try:
-            max_duration = int(duration_input)
-            if max_duration <= 0:
-                print("输入值必须大于0，使用默认值：300秒")
-                max_duration = 300
-            else:
-                print(f"最大时长设置为：{max_duration}秒（{max_duration/60:.1f}分钟）")
-        except ValueError:
-            print("输入无效，使用默认值：300秒")
-            max_duration = 300
-    else:
-        print(f"使用默认值：300秒（5分钟）")
-    
-    return video_filename, user_instruction, max_duration
+    return video_filename
 
 def save_transcript(transcript, video_name):
     """保存转录文本到文件"""
@@ -246,50 +207,42 @@ async def analyze_keyframes_async(visual_recognition, keyframes_to_analyze):
     
     return await asyncio.gather(*tasks)
 
-def main():
-    """主函数"""
-    logger.info("开始视频智能剪辑流程")
-    
+def data_processing():
     try:
-        # 1. 确保所有目录存在
-        logger.info("步骤1: 检查目录结构")
-        ensure_directories()
-        
-        # 2. 获取用户输入
-        logger.info("步骤2: 获取用户输入")
+        logger.info("开始进行数据处理")
+        logger.info("步骤1：选择处理的视频")
         user_input = get_user_input()
         
         if user_input is None:
             logger.error("无法获取用户输入，程序退出")
-            return
+            return False
         
-        video_filename, user_instruction, max_duration = user_input
+        video_filename = user_input
         video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
         
         if not os.path.exists(video_path):
             logger.error(f"视频文件不存在: {video_path}")
             print(f"错误: 视频文件不存在: {video_path}")
-            return
+            return False
         
         video_name = os.path.splitext(video_filename)[0]
         logger.info(f"处理视频: {video_filename}")
-        logger.info(f"用户指令: {user_instruction}")
+        # logger.info(f"用户指令: {user_instruction}")
         
-        # 3. 初始化处理器
-        logger.info("步骤3: 初始化处理器")
+        # 2. 初始化处理器
+        logger.info("步骤2：初始化处理器")
         video_processor = VideoProcessor()
         speech_to_text = SpeechToText()
-        text_analyzer = TextAnalyzer()
         visual_recognition = VisualRecognition()
         
         print(f"\n{'='*60}")
-        print(f"开始处理视频: {video_filename}")
-        print(f"用户指令: {user_instruction}")
+        print(f"准备处理视频: {video_filename}")
+        # print(f"用户指令: {user_instruction}")
         print(f"{'='*60}")
         
-        # 4. 提取音频
-        logger.info("步骤4: 提取音频")
-        print("\n[1/5] 正在提取音频...")
+        # 3. 提取音频
+        logger.info("步骤3: 提取音频")
+        print("\n正在提取音频...")
         
         audio_filename = f"{video_name}.wav"
         audio_path = os.path.join(PROCESSED_AUDIO_DIR, audio_filename)
@@ -298,25 +251,25 @@ def main():
         if not success:
             logger.error("音频提取失败")
             print("错误: 音频提取失败")
-            return
+            return False
         
         print(f"✓ 音频已提取: {audio_path}")
         
-        # 5. 语音转文字
-        logger.info("步骤5: 语音转文字")
-        print("\n[2/5] 正在将音频转换为文字...")
+        # 4. 语音转文字
+        logger.info("步骤4: 语音转文字")
+        print("\n正在将音频转换为文字...")
         
         first_transcript = speech_to_text.transcribe(audio_path)
         if not first_transcript:
             logger.error("语音转文字失败")
             print("错误: 语音转文字失败")
-            return
+            return False
         transcript = speech_to_text.split_by_punctuation(first_transcript)
 
         print(f"✓ 语音转文字完成，共识别 {len(transcript)} 个片段")
         
         # 5.5 视觉内容分析 (关键帧提取 + API调用)
-        logger.info("步骤5.5: 视觉内容分析")
+        logger.info("步骤4.5: 视觉内容分析")
         print("\n[Visual] 正在分析视频画面内容 (这可能需要一些时间)...")
         
         # 提取关键帧
@@ -383,50 +336,171 @@ def main():
         
         # 保存转录结果
         transcript_path = save_transcript(full_transcript, video_name)
-        
-        # 5.6 RAG 数据清洗与入库 (测试)
-        logger.info("步骤5.6: RAG 数据准备与测试")
+
+    except KeyboardInterrupt:
+        print("\n\n程序被用户中断")
+        logger.info("程序被用户中断")
+        return False
+    
+    except Exception as e:
+        logger.exception(f"程序运行出错: {str(e)}")
+        print(f"\n错误: {str(e)}")
+        print("详细信息请查看日志文件: video_silce.log")
+        return False
+
+def rag_building():
+
+    json_files = []
+    if os.path.exists(TRANSCRIPTS_DIR):
+        for file in os.listdir(TRANSCRIPTS_DIR):
+            if file.lower().endswith(('.json', 'rag.json')):
+                json_files.append(file)
+    
+    if not json_files:
+        print(f"未在 {TRANSCRIPTS_DIR} 目录中找到输入的json文件。")
+        print("请手动放入json文件或进行数据准备操作后再重试")
+        return False
+    
+    # 显示可选的文件
+    print("\n可选的json文件:")
+    for i, json_file in enumerate(json_files, 1):
+        print(f"  {i}. {json_file}")
+    
+    # 选择文件
+    while True:
+        try:
+            choice = input(f"\n请选择要输入的json文件 (1-{len(json_files)}) 或输入文件名: ").strip()
+            
+            # 如果用户直接输入了数字
+            if choice.isdigit():
+                index = int(choice) - 1
+                if 0 <= index < len(json_files):
+                    json_filename = json_files[index]
+                    break
+                else:
+                    print(f"请输入 1-{len(json_files)} 之间的数字。")
+            
+            # 如果用户输入了文件名
+            elif choice in json_files:
+                json_filename = choice
+                break
+            
+            # 如果用户输入了相对路径或绝对路径
+            elif os.path.exists(choice):
+                json_filename = os.path.basename(choice)
+                # 如果文件不在输入目录中，复制到输入目录
+                src_path = choice if os.path.isabs(choice) else os.path.abspath(choice)
+                dst_path = os.path.join(TRANSCRIPTS_DIR, json_filename)
+                
+                if src_path != dst_path:
+                    import shutil
+                    shutil.copy2(src_path, dst_path)
+                    print(f"已将视频文件复制到: {dst_path}")
+                break
+            
+            else:
+                print("输入无效，请重新选择。")
+                
+        except ValueError:
+            print("请输入有效的数字或文件名。")
+
+    transcript_path = os.path.join(TRANSCRIPTS_DIR, f"{json_filename}")
+
+    try:
+        logger.info("RAG 数据准备与测试")
         print("\n[RAG] 正在准备知识库数据...")
         
         if transcript_path:
-            rag_ready_path = transcript_path.replace(".json", "_rag.json")
-            # 假设 category 为 general，或者让 user_instruction 决定，这里先用 general
-            clean_json_data(transcript_path, rag_ready_path, category_tag="general")
+            if json_filename.endswith("_rag.json"):
+                rag_ready_path = transcript_path
+            else:
+                rag_ready_path = transcript_path.replace(".json", "_rag.json")
+                # 假设 category 为 general，或者让 user_instruction 决定，这里先用 general
+                clean_json_data(transcript_path, rag_ready_path, category_tag="general")
             
             if os.path.exists(rag_ready_path):
-                 print("\n[RAG] 正在构建向量知识库...")
                  # 加载清洗后的数据
                  with open(rag_ready_path, 'r', encoding='utf-8') as f:
                      rag_data = json.load(f)
-                 
-                 # 初始化知识库
+                 logger.info("RAG 数据库加载完成")
+                  
                  try:
                      vkb = VideoKnowledgeBase()
-                     vkb.add_data(rag_data)
-                     
-                     # 测试搜索
-                     test_query = user_instruction  # 使用用户的指令作为测试查询
-                     print(f"\n[RAG] 测试检索: '{test_query}'")
-                     results = vkb.search(test_query, top_k=3)
-                     
-                     print("检索结果:")
-                     if results and 'documents' in results and results['documents']:
-                         for i, doc in enumerate(results['documents'][0]):
-                             # check if metadata exists and matches index
-                             if i < len(results['metadatas'][0]):
-                                 meta = results['metadatas'][0][i]
-                                 print(f"  {i+1}. [{meta['start']:.1f}s - {meta['end']:.1f}s] {doc}")
-                             else:
-                                 print(f"  {i+1}. {doc}")
+                     existing_count = vkb.collection.count()
+                     print(f"当前向量库中已有 {existing_count} 条数据。")
+                    
+                     do_upsert = True
+                     if existing_count > 0:
+                        user_choice = input("是否跳过入库步骤直接进行检索？(y/n) [y]: ").strip().lower()
+                        if user_choice in ['', 'y', 'yes']:
+                            do_upsert = False
+                            print("⏭️  已跳过入库步骤。")
+
+                     if do_upsert:
+                        # 分批处理以避免 Embedding API 限制 (通常为 25)
+                        BATCH_SIZE = 20
+                        total_items = len(rag_data)
+                        print(f"准备入库 {total_items} 条数据，分批处理中 (Batch Size: {BATCH_SIZE})...")
+
+                        for i in range(0, total_items, BATCH_SIZE):
+                            batch_data = rag_data[i : i + BATCH_SIZE]
+                            
+                            batch_ids = [str(item['id']) for item in batch_data]
+                            batch_documents = [item['rag_text'] for item in batch_data]
+                            batch_metadatas = [{
+                                "start": item['start'],
+                                "end": item['end'],
+                                "type": item['type'],
+                                "category": item['category'],
+                                "raw_content": item['content']
+                            } for item in batch_data]
+
+                            vkb.collection.upsert(
+                                ids=batch_ids,
+                                documents=batch_documents,
+                                metadatas=batch_metadatas
+                            )
+                            print(f"  - 进度: {min(i + BATCH_SIZE, total_items)}/{total_items} 已处理")
+
+                        print(f"向量库更新完成")
                  except Exception as e:
                      print(f"[RAG] 错误: {e}")
                      logger.error(f"RAG Error: {e}")
+                     return False
             else:
-                logger.error("RAG 数据清洗失败，文件未生成")
-        
-        # 6. 文本分析
-        logger.info("步骤6: 文本分析")
-        print("\n[3/5] 正在分析文本内容...")
+                logger.error("RAG 数据清洗失败或加载失败")
+                return False
+    except ValueError:
+            print("RAG构建失败。")
+            return False
+
+def video_editing():
+    logger.info("开始执行视频剪辑及文本分析功能")
+
+    video_processor = VideoProcessor()
+    text_analyzer = TextAnalyzer()
+
+    try:
+        user_instruction = input("请输入剪辑要求：").strip()
+        duration_input = input("\n请输入最大时长（秒）: ").strip()
+        max_duration = int(duration_input)
+
+        logger.info("步骤1: 文本分析")
+        print("\n正在分析文本内容...")
+
+        video_files = []
+        if os.path.exists(INPUT_VIDEO_DIR):
+            for file in os.listdir(INPUT_VIDEO_DIR):
+                if file.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                    video_files.append(file)
+        video_filename = video_files[0]
+        video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
+        video_name = os.path.splitext(video_filename)[0]
+
+        transcript_path = os.path.join(TRANSCRIPTS_DIR, f"{video_name}_transcript.json")
+        if os.path.exists(transcript_path):
+            with open(transcript_path, 'r', encoding='utf-8') as f:
+                transcript = json.load(f)
         
         segments = text_analyzer.analyze_transcript(transcript, user_instruction)
         if not segments:
@@ -546,6 +620,42 @@ def main():
         print(f"{'='*60}")
         
         logger.info(f"视频处理完成，输出文件: {output_path}")
+    except ValueError:
+            print("RAG构建失败。")
+            return False
+    pass
+
+def main():
+    """主函数"""
+    logger.info("开始视频智能剪辑流程")
+    
+    try:
+        # 1. 确保所有目录存在
+        logger.info(" 检查目录结构")
+        ensure_directories()
+
+        print(" 请输入对应数字来执行相关操作")
+        print("1. 数据准备，根据输入视频生成音频和transcripts的json文件")
+        print("2. 构建RAG知识库，执行前请确保transcripts里有对应json文件")
+        print("3. 调用API进行文本分析并进行视频剪辑功能")
+
+        while True:
+            branch = input("\n 请用数字1-3来选择操作或输入q来退出程序: ").strip()
+            if branch.lower() == 'q':
+                break
+
+            if branch.isdigit():
+                branch_index = int(branch)
+                if branch_index == 2 :
+                    rag_building()
+                elif branch_index == 1:
+                    data_processing()
+                elif branch_index == 3:
+                    video_editing()
+                else:
+                    print(f"请输入 1-3 之间的数字。")
+
+        return
         
     except KeyboardInterrupt:
         print("\n\n程序被用户中断")
@@ -566,4 +676,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"程序出现未预期的错误: {str(e)}")
         logging.exception("未预期的错误")
-
