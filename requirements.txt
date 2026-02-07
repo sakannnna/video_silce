@@ -11,4 +11,5 @@ chromadb
 tqdm
 numpy
 Pillow
+opencv-python
 
