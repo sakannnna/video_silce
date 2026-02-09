@@ -249,9 +249,16 @@ class VideoProcessor:
         if ret:
             frame_name = f"{prefix}{int(time_sec*1000):06d}.jpg"
             frame_path = os.path.join(output_dir, frame_name)
-            cv2.imwrite(frame_path, frame)
-            keyframes_list.append({"time": time_sec, "path": frame_path})
-            extracted_times_set.add(time_sec)
+            try:
+                is_success, buffer = cv2.imencode(".jpg", frame)
+                if is_success:
+                    buffer.tofile(frame_path)
+                    keyframes_list.append({"time": time_sec, "path": frame_path})
+                    extracted_times_set.add(time_sec)
+                else:
+                    print(f"Error encoding frame: {frame_path}")
+            except Exception as e:
+                print(f"Error writing frame {frame_path}: {e}")
 
     def _detect_scenes_opencv(self, video_path, threshold=0.7):
         """场景检测：基于HSV直方图"""
