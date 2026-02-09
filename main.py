@@ -798,10 +798,6 @@ def convert_to_vertical():
             except ValueError:
                 print("请输入有效的数字或文件名。")
         
-        # 询问模糊半径
-        blur_radius_input = input("\n请输入模糊半径 (默认25): ").strip()
-        blur_radius = int(blur_radius_input) if blur_radius_input.isdigit() else 25
-        
         # 处理视频
         video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
         video_name = os.path.splitext(video_filename)[0]
@@ -810,12 +806,12 @@ def convert_to_vertical():
         
         print(f"\n{'='*60}")
         print(f"准备转换视频: {video_filename}")
-        print(f"模糊半径: {blur_radius}")
+        print(f"转换方法: 纯色填充 (最快速)")
         print(f"输出文件: {output_filename}")
         print(f"{'='*60}")
         
-        # 调用转换方法
-        success = video_processor.convert_to_vertical(video_path, output_path, blur_radius)
+        # 调用转换方法，使用纯色填充
+        success = video_processor.convert_to_vertical(video_path, output_path, method="solid")
         
         if success:
             print(f"\n{'='*60}")
