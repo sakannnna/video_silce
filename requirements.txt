@@ -12,4 +12,4 @@ tqdm
 numpy
 Pillow
 opencv-python
-
+httpx

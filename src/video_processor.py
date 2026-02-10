@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import json
 from moviepy import VideoFileClip, concatenate_videoclips, CompositeVideoClip
+import imageio_ffmpeg
 
 # 将项目根目录添加到系统路径，以便导入 config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -379,7 +380,8 @@ class VideoProcessor:
                 return False
             
             # 组合片段
-            final_clip = concatenate_videoclips(clips)
+            # 使用 method="compose" 可以避免因不同片段的参数微小差异导致的问题
+            final_clip = concatenate_videoclips(clips, method="compose")
             
             # 生成输出路径
             # 如果 output_filename 已经是绝对路径，直接使用；否则拼接到 OUTPUT_VIDEO_DIR
@@ -441,13 +443,15 @@ class VideoProcessor:
                 output_path = os.path.join(os.path.dirname(video_path), f"{video_name}_vertical.mp4")
 
             # 1. 获取视频原始尺寸
-            probe_cmd = [
-                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                '-show_entries', 'stream=width,height', '-of', 'json', video_path
-            ]
-            info = json.loads(subprocess.check_output(probe_cmd))
-            w = info['streams'][0]['width']
-            h = info['streams'][0]['height']
+            # 使用 MoviePy 读取尺寸，避免直接调用 ffprobe
+            try:
+                clip = VideoFileClip(video_path)
+                w, h = clip.size
+                clip.close()
+            except Exception as e:
+                print(f"Error reading video dimensions with MoviePy: {e}")
+                # Fallback to ffprobe if needed, but likely if MoviePy fails, ffprobe will too or it's not a video
+                return False
 
             # 计算 9:16 目标尺寸
             if w/h > 9/16: # 横屏
@@ -500,8 +504,11 @@ class VideoProcessor:
 
             # 3. 执行 FFmpeg 命令
             # 增加硬件加速参数（如果有Nvidia显卡可以换成 h264_nvenc）
+            # 获取 imageio 提供的 ffmpeg 路径
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_exe, "-y",
                 "-hide_banner",        # 隐藏版权信息
                 "-i", video_path,
                 "-vf", filter_str,
