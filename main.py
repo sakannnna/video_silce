@@ -216,6 +216,54 @@ async def analyze_keyframes_async(visual_recognition, keyframes_to_analyze):
         
     return results
 
+def choose_json(files):
+
+    print("\n可选的json文件:")
+    for i, json_file in enumerate(files, 1):
+        print(f"  {i}. {json_file}")
+
+    filename = None
+
+    # 选择文件
+    while True:
+        try:
+            choice = input(f"\n请选择要输入的json文件 (1-{len(files)}) 或输入文件名: ").strip()
+            
+            # 如果用户直接输入了数字
+            if choice.isdigit():
+                index = int(choice) - 1
+                if 0 <= index < len(files):
+                    filename = files[index]
+                    break
+                else:
+                    print(f"请输入 1-{len(files)} 之间的数字。")
+            
+            # 如果用户输入了文件名
+            elif choice in files:
+                filename = choice
+                break
+            
+            # 如果用户输入了相对路径或绝对路径
+            elif os.path.exists(choice):
+                filename = os.path.basename(choice)
+                # 如果文件不在输入目录中，复制到输入目录
+                src_path = choice if os.path.isabs(choice) else os.path.abspath(choice)
+                dst_path = os.path.join(TRANSCRIPTS_DIR, filename)
+                
+                if src_path != dst_path:
+                    import shutil
+                    shutil.copy2(src_path, dst_path)
+                    print(f"已将视频文件复制到: {dst_path}")
+                break
+            
+            else:
+                print("输入无效，请重新选择。")
+                
+        except ValueError:
+            print("请输入有效的数字或文件名。")
+    
+    return filename
+
 def data_processing():
     try:
         logger.info("开始进行数据处理")
@@ -467,60 +515,18 @@ def rag_building():
         print("输入2可退出该部分")
         
         cho = input(f"\n请选择要输入1或2选择不同操作 ").strip()
-
         if cho.isdigit():
             if int(cho) == 2:
                 return False
             elif int(cho) == 1:
 
-                print("\n可选的json文件:")
-                for i, json_file in enumerate(json_files, 1):
-                    print(f"  {i}. {json_file}")
-
-                # 选择文件
-                while True:
-                    try:
-                        choice = input(f"\n请选择要输入的json文件 (1-{len(json_files)}) 或输入文件名: ").strip()
-                        
-                        # 如果用户直接输入了数字
-                        if choice.isdigit():
-                            index = int(choice) - 1
-                            if 0 <= index < len(json_files):
-                                json_filename = json_files[index]
-                                break
-                            else:
-                                print(f"请输入 1-{len(json_files)} 之间的数字。")
-                        
-                        # 如果用户输入了文件名
-                        elif choice in json_files:
-                            json_filename = choice
-                            break
-                        
-                        # 如果用户输入了相对路径或绝对路径
-                        elif os.path.exists(choice):
-                            json_filename = os.path.basename(choice)
-                            # 如果文件不在输入目录中，复制到输入目录
-                            src_path = choice if os.path.isabs(choice) else os.path.abspath(choice)
-                            dst_path = os.path.join(TRANSCRIPTS_DIR, json_filename)
-                            
-                            if src_path != dst_path:
-                                import shutil
-                                shutil.copy2(src_path, dst_path)
-                                print(f"已将视频文件复制到: {dst_path}")
-                            break
-                        
-                        else:
-                            print("输入无效，请重新选择。")
-                            
-                    except ValueError:
-                        print("请输入有效的数字或文件名。")
-
+                json_filename = choose_json(json_files)
                 transcript_path = os.path.join(TRANSCRIPTS_DIR, f"{json_filename}")
                 rag_filename = json_filename.replace(".json","_rag.json")
                 rag_ready_path = os.path.join(RAGSCRIPTS_DIR,f"{rag_filename}")
                 clean_json_data(transcript_path, rag_ready_path, category_tag="general")
                 rag_files.append(rag_filename)
-
+    
     try:
         logger.info("RAG 数据准备与测试")
         print("开始构建RAG数据库")
@@ -536,93 +542,17 @@ def rag_building():
             if int(choi) == 1:
                 break
             elif int(choi) == 2:
-                print("\n可选的json文件:")
-                for i, json_file in enumerate(json_files, 1):
-                    print(f"  {i}. {json_file}")
 
-                # 选择文件
-                while True:
-                    try:
-                        choice = input(f"\n请选择要输入的json文件 (1-{len(json_files)}) 或输入文件名: ").strip()
-                        
-                        # 如果用户直接输入了数字
-                        if choice.isdigit():
-                            index = int(choice) - 1
-                            if 0 <= index < len(json_files):
-                                json_filename = json_files[index]
-                                break
-                            else:
-                                print(f"请输入 1-{len(json_files)} 之间的数字。")
-                        
-                        # 如果用户输入了文件名
-                        elif choice in json_files:
-                            json_filename = choice
-                            break
-                        
-                        # 如果用户输入了相对路径或绝对路径
-                        elif os.path.exists(choice):
-                            json_filename = os.path.basename(choice)
-                            # 如果文件不在输入目录中，复制到输入目录
-                            src_path = choice if os.path.isabs(choice) else os.path.abspath(choice)
-                            dst_path = os.path.join(TRANSCRIPTS_DIR, json_filename)
-                            
-                            if src_path != dst_path:
-                                import shutil
-                                shutil.copy2(src_path, dst_path)
-                                print(f"已将视频文件复制到: {dst_path}")
-                            break
-                        
-                        else:
-                            print("输入无效，请重新选择。")
-                            
-                    except ValueError:
-                        print("请输入有效的数字或文件名。")
-
+                json_filename = choose_json(json_files)
                 transcript_path = os.path.join(TRANSCRIPTS_DIR, f"{json_filename}")
                 rag_filename = json_filename.replace(".json","_rag.json")
                 rag_ready_path = os.path.join(RAGSCRIPTS_DIR,f"{rag_filename}")
                 clean_json_data(transcript_path, rag_ready_path, category_tag="general")
                 rag_files.append(rag_filename)
-        # 选择文件
-        while True:
-            try:
-                choice = input(f"\n请选择要输入的rag.json文件 (1-{len(rag_files)}) 或输入文件名: ").strip()
-                
-                # 如果用户直接输入了数字
-                if choice.isdigit():
-                    index = int(choice) - 1
-                    if 0 <= index < len(rag_files):
-                        rag_filename = rag_files[index]
-                        break
-                    else:
-                        print(f"请输入 1-{len(rag_files)} 之间的数字。")
-                
-                # 如果用户输入了文件名
-                elif choice in json_files:
-                    rag_filename = choice
-                    break
-                
-                # 如果用户输入了相对路径或绝对路径
-                elif os.path.exists(choice):
-                    rag_filename = os.path.basename(choice)
-                    # 如果文件不在输入目录中，复制到输入目录
-                    src_path = choice if os.path.isabs(choice) else os.path.abspath(choice)
-                    dst_path = os.path.join(RAGSCRIPTS_DIR, rag_filename)
-                    
-                    if src_path != dst_path:
-                        import shutil
-                        shutil.copy2(src_path, dst_path)
-                        print(f"已将视频文件复制到: {dst_path}")
-                    break
-                
-                else:
-                    print("输入无效，请重新选择。")
-                    
-            except ValueError:
-                print("请输入有效的数字或文件名。")
 
+        rag_filename = choose_json(rag_files)
         rag_ready_path = os.path.join(RAGSCRIPTS_DIR,f"{rag_filename}")
-            
+
         if rag_ready_path:
                  # 加载清洗后的数据
                  with open(rag_ready_path, 'r', encoding='utf-8') as f:
