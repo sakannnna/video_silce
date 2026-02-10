@@ -1,7 +1,9 @@
 import os
 import sys
+import subprocess
 import numpy as np
 import cv2
+import json
 from moviepy import VideoFileClip, concatenate_videoclips, CompositeVideoClip
 
 # 将项目根目录添加到系统路径，以便导入 config
@@ -431,163 +433,98 @@ class VideoProcessor:
 
     def convert_to_vertical(self, video_path, output_path=None, method="solid", background_color=(0, 0, 0)):
         """
-        将横屏视频转换为竖屏视频（增强版）
-        
-        参数Args:
-            video_path: 输入视频文件路径
-            output_path: 输出视频文件路径（可选，默认为原文件名加_vertical后缀）
-            method: 转换方法，可选值：
-                - "solid": 纯色背景（最快）
-                - "static": 静态背景（使用视频第一帧）
-                - "blur": 模糊背景（原始方法，较慢）
-            background_color: 当method="solid"时使用的背景颜色，格式为RGB元组，默认黑色
-        返回Returns:
-            bool: 是否成功
+        高性能横屏转竖屏（完全基于FFmpeg原生滤镜）
         """
         try:
-            print(f"正在处理视频: {video_path}")
-            print(f"转换方法: {method}")
-            
-            # 确保目录存在
             if output_path is None:
-                video_dir = os.path.dirname(video_path)
                 video_name = os.path.splitext(os.path.basename(video_path))[0]
-                output_path = os.path.join(video_dir, f"{video_name}_vertical.mp4")
-            
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # 加载视频
-            video = VideoFileClip(video_path)
-            
-            # 获取视频尺寸
-            w, h = video.size
-            print(f"原始视频尺寸: {w}x{h}")
-            
-            # 检查是否需要转换（横屏：宽度 > 高度）
-            if w <= h:
-                print("视频已经是竖屏，无需转换")
+                output_path = os.path.join(os.path.dirname(video_path), f"{video_name}_vertical.mp4")
+
+            # 1. 获取视频原始尺寸
+            probe_cmd = [
+                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height', '-of', 'json', video_path
+            ]
+            info = json.loads(subprocess.check_output(probe_cmd))
+            w = info['streams'][0]['width']
+            h = info['streams'][0]['height']
+
+            # 计算 9:16 目标尺寸
+            if w/h > 9/16: # 横屏
+                target_h = h if h % 2 == 0 else h - 1
+                target_w = int(target_h * 9 / 16)
+                if target_w % 2 != 0: target_w -= 1
+            else:
+                print("视频已经是竖屏或比例接近，无需转换")
+                # 如果文件路径不同，复制一份
                 if output_path != video_path:
-                    video.write_videofile(
-                        output_path,
-                        codec="libx264",
-                        audio_codec="aac",
-                        fps=video.fps,
-                        logger="bar"
-                    )
-                video.close()
-                
-                # 强制刷新文件系统
-                self._force_file_sync(output_path)
-                
-                # 验证文件可访问性
-                is_ready = self._verify_video_file_ready(output_path, timeout=10)
-                
-                if is_ready:
-                    print(f"✓ 视频转换完成并已确认可访问: {output_path}")
-                else:
-                    print(f"⚠ 视频已生成，但建议等待几秒后再访问: {output_path}")
-                    print("   文件位置: " + os.path.abspath(output_path))
-                
+                    import shutil
+                    shutil.copy2(video_path, output_path)
                 return True
-            
-            # 计算竖屏尺寸（9:16比例）
-            # 保持高度不变，宽度调整为高度的9/16
-            target_height = h
-            target_width = int(h * 9 / 16)
-            
-            # 如果计算出的宽度小于原始宽度，则以原始宽度为基准
-            if target_width < w:
-                target_width = w
-                target_height = int(w * 16 / 9)
-            
-            print(f"目标视频尺寸: {target_width}x{target_height}")
-            
-            # 计算原始视频在画布上的位置（居中）
-            x_offset = (target_width - w) // 2
-            y_offset = (target_height - h) // 2
-            
-            print(f"视频居中位置: ({x_offset}, {y_offset})")
-            
-            # 创建背景
+
+            print(f"🚀 启动 FFmpeg 高速转换 | 模式: {method} | 目标: {target_w}x{target_h}")
+
+            # 2. 根据不同模式构建不同的 FFmpeg 滤镜字符串
             if method == "solid":
-                # 纯色背景
-                print(f"使用纯色背景: {background_color}")
-                # 创建一个纯色的静态帧
-                from moviepy.video.VideoClip import ColorClip
-                background = ColorClip(size=(target_width, target_height), color=background_color, duration=video.duration)
+                # 纯色背景：先缩放以适应目标尺寸（保持比例），然后填充
+                # 将RGB元组转换为hex颜色
+                color_hex = "0x{:02x}{:02x}{:02x}".format(*background_color)
+                # 关键修正：必须先 scale 缩小视频，否则 pad 会报错（因为输入尺寸大于目标尺寸）
+                filter_str = (
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                    f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:{color_hex}"
+                )
+            
+            elif method == "blur":
+                # 模糊背景：
+                # [0:v] 分为两路：
+                # 路1(bg): 缩放并裁剪填充整个画布 -> 高斯模糊
+                # 路2(fg): 缩放以适应画布宽度
+                # 最后将 fg 覆盖在 bg 中心
+                filter_str = (
+                    f"[0:v]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h},boxblur=20:10[bg];"
+                    f"[0:v]scale={target_w}:-1[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
+                )
             
             elif method == "static":
-                # 静态背景（使用视频第一帧）
-                print("使用静态背景（视频第一帧）")
-                # 获取第一帧
-                first_frame = video.get_frame(0)
-                # 创建静态背景
-                from moviepy.video.VideoClip import ImageClip
-                background = ImageClip(first_frame).set_duration(video.duration)
-                # 调整背景尺寸
-                background = background.resize((target_width, target_height))
-            
-            else:  # blur 或其他
-                # 原始模糊背景方法
-                print("使用模糊背景")
-                # 计算缩放比例，使原始视频放大以填充竖屏
-                scale_factor = max(target_width / w, target_height / h)
-                scaled_w = int(w * scale_factor)
-                scaled_h = int(h * scale_factor)
-                
-                print(f"放大比例: {scale_factor:.2f}")
-                print(f"放大后尺寸: {scaled_w}x{scaled_h}")
-                
-                # 创建背景视频（放大并模糊）
-                def make_blur_background(frame):
-                    # 使用OpenCV进行模糊处理
-                    blurred = cv2.GaussianBlur(frame, (25, 25), 0)
-                    return blurred
-                
-                # 创建放大并模糊的背景
-                blurred_video = video.resized((scaled_w, scaled_h))
-                blurred_video = blurred_video.image_transform(make_blur_background)
-                
-                # 调整背景尺寸到目标尺寸
-                background = blurred_video.resized((target_width, target_height))
-            
-            # 使用 CompositeVideoClip 合成视频
-            final_video = CompositeVideoClip([background, video.with_position((x_offset, y_offset))], size=(target_width, target_height))
-            
-            # 导出视频
-            final_video.write_videofile(
-                output_path,
-                codec="libx264",
-                audio_codec="aac",
-                fps=video.fps,
-                preset="medium",
-                threads=4,
-                logger="bar"
-            )
-            
-            # 关闭资源
-            video.close()
-            background.close()
-            final_video.close()
-            
-            # ======== 新增的解决方案核心代码 ========
-            # 1. 强制刷新文件系统
-            self._force_file_sync(output_path)
-            
-            # 2. 验证文件可访问性
-            is_ready = self._verify_video_file_ready(output_path, timeout=10)
-            
-            if is_ready:
-                print(f"✓ 视频转换完成并已确认可访问: {output_path}")
+                # 静态背景（取第一帧）：
+                filter_str = (
+                    f"[0:v]start_number=0,scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h},trim=end_frame=1,loop=-1:1[bg];"
+                    f"[0:v]scale={target_w}:-1[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
+                )
             else:
-                print(f"⚠ 视频已生成，但建议等待几秒后再访问: {output_path}")
-                print("   文件位置: " + os.path.abspath(output_path))
-            # ======================================
+                print(f"Unknown method: {method}, using solid black")
+                filter_str = f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black"
+
+            # 3. 执行 FFmpeg 命令
+            # 增加硬件加速参数（如果有Nvidia显卡可以换成 h264_nvenc）
+            cmd = [
+                "ffmpeg", "-y",
+                "-hide_banner",        # 隐藏版权信息
+                "-i", video_path,
+                "-vf", filter_str,
+                "-c:v", "libx264",
+                "-preset", "veryfast", # 速度优先
+                "-crf", "23",          # 画质平衡
+                "-c:a", "copy",        # 音频不重编，秒完成
+                output_path
+            ]
+
+            subprocess.run(cmd, check=True)
             
-            return True
-                
+            # 验证并返回
+            self._force_file_sync(output_path)
+            if self._verify_video_file_ready(output_path):
+                print(f"✓ 转换成功: {output_path}")
+                return True
+            else:
+                print(f"❌ 转换可能失败，文件未就绪: {output_path}")
+                return False
+
         except Exception as e:
-            print(f"横屏转竖屏失败: {e}")
+            print(f"❌ 转换失败: {e}")
             import traceback
             traceback.print_exc()
             return False

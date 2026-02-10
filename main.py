@@ -17,7 +17,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 # 导入自定义模块
 from config import (
     INPUT_VIDEO_DIR, OUTPUT_VIDEO_DIR, PROCESSED_AUDIO_DIR,
-    TRANSCRIPTS_DIR, ANALYSIS_RESULTS_DIR, SLICE_VIDEO_DIR, KEYFRAMES_DIR, RAGSCRIPTS_DIR
+    TRANSCRIPTS_DIR, ANALYSIS_RESULTS_DIR, SLICE_VIDEO_DIR, KEYFRAMES_DIR, RAGSCRIPTS_DIR, VERTICAL_VIDEO_DIR
 )
 from src.video_processor import VideoProcessor
 from src.speech_to_text import SpeechToText
@@ -49,7 +49,8 @@ def ensure_directories():
         TRANSCRIPTS_DIR,
         ANALYSIS_RESULTS_DIR,
         SLICE_VIDEO_DIR,
-        KEYFRAMES_DIR
+        KEYFRAMES_DIR,
+        VERTICAL_VIDEO_DIR
     ]
     
     for directory in directories:
@@ -844,7 +845,7 @@ def convert_to_vertical():
         video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
         video_name = os.path.splitext(video_filename)[0]
         output_filename = f"{video_name}_vertical.mp4"
-        output_path = os.path.join(OUTPUT_VIDEO_DIR, output_filename)
+        output_path = os.path.join(VERTICAL_VIDEO_DIR, output_filename)
         
         print(f"\n{'='*60}")
         print(f"准备转换视频: {video_filename}")
