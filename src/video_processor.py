@@ -4,6 +4,7 @@ import subprocess
 import numpy as np
 import cv2
 import json
+from tqdm import tqdm
 from moviepy import VideoFileClip, concatenate_videoclips, CompositeVideoClip
 import imageio_ffmpeg
 
@@ -162,12 +163,41 @@ class VideoProcessor:
             print("  - [阶段2&3] 正在检测文字区域(OCR预处理)和运动变化...")
             # 为了效率，每0.5秒采样一帧
             sample_interval = 0.5 
-            curr_time = 0.0
+            
+            # 优化策略：不使用 cap.set() 跳转，而是流式读取
+            # 计算每隔多少帧采样一次
+            frame_interval = int(fps * sample_interval)
+            if frame_interval < 1: frame_interval = 1
+            
+            curr_frame_idx = 0
+            
+            # 重新打开视频以从头开始读取
+            cap.release()
+            cap = cv2.VideoCapture(video_path)
             
             prev_frame_gray = None
             last_motion_time = -100 # 上一次因运动提取的时间
             
-            while curr_time < duration:
+            pbar = tqdm(total=int(total_frames), desc="  - 扫描进度", unit="frames")
+            
+            while True:
+                # 抓取帧但不解码（快速）
+                if curr_frame_idx % frame_interval != 0:
+                    ret = cap.grab()
+                    if not ret:
+                        break
+                    curr_frame_idx += 1
+                    pbar.update(1)
+                    continue
+                
+                # 需要处理的帧：解码
+                ret, frame = cap.retrieve()
+                if not ret:
+                    break
+                    
+                curr_time = curr_frame_idx / fps
+                pbar.update(1)
+                
                 # 跳过已经提取的时间点附近，但仍需读取帧以更新 prev_frame
                 is_extracted = False
                 for t in extracted_times:
@@ -175,34 +205,32 @@ class VideoProcessor:
                         is_extracted = True
                         break
                 
-                cap.set(cv2.CAP_PROP_POS_MSEC, curr_time * 1000)
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                    
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
                 # 如果当前时间点已经被提取过，只更新prev_frame并继续
                 if is_extracted:
                     prev_frame_gray = gray
-                    curr_time += sample_interval
+                    curr_frame_idx += 1
                     continue
 
                 # A. PPT/文字检测
                 if self._detect_bright_rectangle(frame):
-                    self._add_keyframe(cap, curr_time, output_dir, keyframes, extracted_times, prefix="ppt_")
-                    last_motion_time = curr_time # PPT也算是一种视觉变化点
+                    # 注意：这里直接保存当前frame，避免再次调用 _add_keyframe 里的 cap.set
+                    self._save_frame_direct(frame, curr_time, output_dir, keyframes, extracted_times, prefix="ppt_")
+                    last_motion_time = curr_time 
                 
                 # B. 运动检测
                 elif prev_frame_gray is not None:
-                    # 只有当距离上次运动提取超过2秒时才再次提取，避免连续运动产生大量帧
+                    # 只有当距离上次运动提取超过2秒时才再次提取
                     if curr_time - last_motion_time > 2.0:
                         if self._detect_motion_simple(prev_frame_gray, gray):
-                            self._add_keyframe(cap, curr_time, output_dir, keyframes, extracted_times, prefix="motion_")
+                            self._save_frame_direct(frame, curr_time, output_dir, keyframes, extracted_times, prefix="motion_")
                             last_motion_time = curr_time
 
                 prev_frame_gray = gray
-                curr_time += sample_interval
+                curr_frame_idx += 1
+
+            pbar.close()
 
             # 4. 兜底覆盖
             print("  - [兜底] 检查覆盖率...")
@@ -239,6 +267,25 @@ class VideoProcessor:
             import traceback
             traceback.print_exc()
             return []
+
+    def _save_frame_direct(self, frame, time_sec, output_dir, keyframes_list, extracted_times_set, prefix="frame_"):
+        """直接保存当前帧数据，避免重新读取"""
+        # 简单去重
+        for t in extracted_times_set:
+            if abs(t - time_sec) < 0.2:
+                return
+
+        frame_name = f"{prefix}{int(time_sec*1000):06d}.jpg"
+        frame_path = os.path.join(output_dir, frame_name)
+        try:
+            cv2.imwrite(frame_path, frame)
+            extracted_times_set.add(time_sec)
+            keyframes_list.append({
+                "time": time_sec,
+                "path": frame_path
+            })
+        except Exception as e:
+            print(f"Error saving frame: {e}")
 
     def _add_keyframe(self, cap, time_sec, output_dir, keyframes_list, extracted_times_set, prefix="frame_"):
         """辅助函数：保存关键帧"""
@@ -593,11 +640,18 @@ class VideoProcessor:
                 # 如果文件大小稳定3次检查
                 if stable_count >= 3:
                     # 尝试读取文件头确认视频格式
-                    with open(filepath, 'rb') as f:
-                        header = f.read(100)
-                        # 检查是否是有效的视频文件（MP4文件以"ftyp"开头）
-                        if header.startswith(b'\x00\x00\x00\x1cftyp'):
-                            return True
+                    try:
+                        with open(filepath, 'rb') as f:
+                            header = f.read(100)
+                            # 宽松检查：只要包含 ftyp 即可，因为不同编码器生成的 header 长度可能不同
+                            if b'ftyp' in header:
+                                return True
+                    except:
+                        pass
+                    
+                    # 如果读取 header 失败但文件大小稳定且足够大，也认为是成功的
+                    if current_size > 1024 * 10: # > 10KB
+                        return True
                 
                 time.sleep(0.5)
                 

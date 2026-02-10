@@ -26,6 +26,8 @@ from src.visual_recognition import VisualRecognition
 from src.data_merger import merge_audio_visual_data
 from src.data_cleaner import clean_json_data
 from src.rag_engine import VideoKnowledgeBase
+from src.utils import get_file_hash, ensure_in_video_pool
+from config import VIDEO_POOL_DIR
 import numpy as np
 from PIL import Image
 
@@ -283,8 +285,12 @@ def data_processing():
             print(f"错误: 视频文件不存在: {video_path}")
             return False
         
+        # 计算 MD5 并入池
+        video_md5, pool_path = ensure_in_video_pool(video_path, VIDEO_POOL_DIR)
+        print(f"视频 MD5: {video_md5}")
+        
         video_name = os.path.splitext(video_filename)[0]
-        logger.info(f"处理视频: {video_filename}")
+        logger.info(f"处理视频: {video_filename} (MD5: {video_md5})")
         # logger.info(f"用户指令: {user_instruction}")
         
         # 2. 初始化处理器
@@ -317,7 +323,7 @@ def data_processing():
         logger.info("步骤4: 语音转文字")
         print("\n正在将音频转换为文字...")
         
-        first_transcript = speech_to_text.transcribe(audio_path)
+        first_transcript = speech_to_text.transcribe(audio_path, video_md5=video_md5)
         if not first_transcript:
             logger.error("语音转文字失败")
             print("错误: 语音转文字失败")
@@ -559,11 +565,35 @@ def rag_building():
                  with open(rag_ready_path, 'r', encoding='utf-8') as f:
                      rag_data = json.load(f)
                  logger.info("RAG 数据库加载完成")
+                 
+                 # 获取 Video MD5
+                 base_name = rag_filename.replace("_rag.json", "").replace(".json", "") # Handle both cases if needed
+                 # clean_json_data input was transcript, output was rag_ready.
+                 # rag_filename usually matches video name
+                 
+                 video_md5 = None
+                 # 尝试从 INPUT_VIDEO_DIR 找对应视频
+                 import glob
+                 # 模糊匹配
+                 candidates = glob.glob(os.path.join(INPUT_VIDEO_DIR, f"{base_name}.*"))
+                 for c in candidates:
+                     if c.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                         video_md5 = get_file_hash(c)
+                         print(f"找到对应视频: {c}, MD5: {video_md5}")
+                         break
+                 
+                 if not video_md5:
+                     print("⚠️ 警告: 未找到原始视频文件，无法计算准确MD5。")
+                     print("将使用文件名生成的伪MD5。这可能导致跨文件关联失效。")
+                     import hashlib
+                     video_md5 = hashlib.md5(base_name.encode()).hexdigest()
+
+                 lib_name = input("请输入目标逻辑库名称 (默认为 default_lib): ").strip() or "default_lib"
                   
                  try:
-                     vkb = VideoKnowledgeBase()
+                     vkb = VideoKnowledgeBase(lib_name=lib_name)
                      existing_count = vkb.collection.count()
-                     print(f"当前向量库中已有 {existing_count} 条数据。")
+                     print(f"逻辑库 '{lib_name}' 中已有 {existing_count} 条数据。")
                     
                      do_upsert = True
                      if existing_count > 0:
@@ -581,21 +611,18 @@ def rag_building():
                         for i in range(0, total_items, BATCH_SIZE):
                             batch_data = rag_data[i : i + BATCH_SIZE]
                             
-                            batch_ids = [str(item['id']) for item in batch_data]
-                            batch_documents = [item['rag_text'] for item in batch_data]
-                            batch_metadatas = [{
-                                "start": item['start'],
-                                "end": item['end'],
-                                "type": item['type'],
-                                "category": item['category'],
-                                "raw_content": item['content']
-                            } for item in batch_data]
-
-                            vkb.collection.upsert(
-                                ids=batch_ids,
-                                documents=batch_documents,
-                                metadatas=batch_metadatas
-                            )
+                            # vkb.add_data 现在处理 batch 逻辑，但它本身没有分批提交到 chroma (wait, original code logic was batching manually)
+                            # My updated add_data takes the whole list and adds it.
+                            # But wait, DashScope embedding has limits.
+                            # Original code: vkb.collection.add calls embedding_fn.
+                            # embedding_fn calls dashscope.
+                            # DashScope limit is 25 per call.
+                            # So I MUST keep the batching logic OUTSIDE or inside add_data.
+                            # Original code had batching loop here.
+                            # But my new add_data signature is add_data(json_data, video_md5).
+                            # So I should call add_data with the batch.
+                            
+                            vkb.add_data(batch_data, video_md5)
                             print(f"  - 进度: {min(i + BATCH_SIZE, total_items)}/{total_items} 已处理")
 
                         print(f"向量库更新完成")
@@ -611,7 +638,7 @@ def rag_building():
             return False
 
     while True:
-        query = input("\n请输入查询指令 (例如: '找出切肉的画面'): ").strip()
+        query = input("\n请输入查询指令 (例如: '找出切肉的画面') 或输入 'q' 退出: ").strip()
         if query.lower() == 'q':
             break
         
@@ -620,14 +647,18 @@ def rag_building():
             
         try:
             print(f"正在检索: '{query}'...")
-            results = vkb.search(query, top_k=3)
+            # 启用上下文扩展
+            results = vkb.search(query, top_k=3, expand_context=True)
             
             print("\n检索结果:")
             if results and 'documents' in results and results['documents']:
                 for i, doc in enumerate(results['documents'][0]):
                     if i < len(results['metadatas'][0]):
                         meta = results['metadatas'][0][i]
-                        print(f"  {i+1}. [{meta['start']:.1f}s - {meta['end']:.1f}s] {doc}")
+                        # 显示扩展标记
+                        is_expanded = meta.get('is_expanded', False)
+                        expanded_tag = " [已扩展]" if is_expanded else ""
+                        print(f"  {i+1}. [{meta['start']:.1f}s - {meta['end']:.1f}s]{expanded_tag} {doc}")
                     else:
                         print(f"  {i+1}. {doc}")
             else:
