@@ -880,12 +880,23 @@ def convert_to_vertical():
         
         print(f"\n{'='*60}")
         print(f"准备转换视频: {video_filename}")
-        print(f"转换方法: 纯色填充 (最快速)")
+        print(f"转换模式: ")
+        print(f"  1. 纯色背景 (solid)")
+        print(f"  2. 模糊背景 (blur)")
+        print(f"  3. 静态背景 (static)")
+        
+        mode_choice = input("\n请选择转换模式 (1-3) [默认 1]: ").strip()
+        method = "solid"
+        if mode_choice == "2":
+            method = "blur"
+        elif mode_choice == "3":
+            method = "static"
+
         print(f"输出文件: {output_filename}")
         print(f"{'='*60}")
         
-        # 调用转换方法，使用纯色填充
-        success = video_processor.convert_to_vertical(video_path, output_path, method="solid")
+        # 调用转换方法
+        success = video_processor.convert_to_vertical(video_path, output_path, method=method)
         
         if success:
             print(f"\n{'='*60}")

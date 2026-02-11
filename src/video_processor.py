@@ -553,12 +553,16 @@ class VideoProcessor:
             # 增加硬件加速参数（如果有Nvidia显卡可以换成 h264_nvenc）
             # 获取 imageio 提供的 ffmpeg 路径
             ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+
+            # 检查是否使用了复杂的滤镜链（带有 [bg][fg] 等标签）
+            is_complex = any(tag in filter_str for tag in ["[bg]", "[fg]", "[0:v]"])
+            filter_arg = "-filter_complex" if is_complex else "-vf"
             
             cmd = [
                 ffmpeg_exe, "-y",
                 "-hide_banner",        # 隐藏版权信息
                 "-i", video_path,
-                "-vf", filter_str,
+                filter_arg, filter_str,
                 "-c:v", "libx264",
                 "-preset", "veryfast", # 速度优先
                 "-crf", "23",          # 画质平衡
