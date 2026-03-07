@@ -1,8 +1,7 @@
-# streamlit_app.py (修复字幕页面)
+# streamlit_app.py
 """
 streamlit_app.py - 视频智能剪辑工具Web界面
-直接调用server.py中的函数，无需额外API服务器
-运行方式: streamlit run streamlit_app.py
+完整版，修复视频路径问题和搜索显示问题
 """
 
 import streamlit as st
@@ -10,16 +9,17 @@ import os
 import sys
 import json
 import time
+import urllib.parse
 from pathlib import Path
 from datetime import datetime
-import pandas as pd
+from typing import Dict, List, Any, Optional
 
-# 导入server模块（修改后的main.py）
+# 导入server模块
 import server
 
 # 设置页面配置
 st.set_page_config(
-    page_title="视频智能剪辑工具",
+    page_title="视频智能剪辑工具 - SSOT",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -28,47 +28,69 @@ st.set_page_config(
 # 自定义CSS
 st.markdown("""
 <style>
-    /* 侧边栏功能卡片 */
     [data-testid="stSidebar"] {
-        background-color: #1e1e2f;
+        background-color: #e0e5eb;
         padding: 20px 10px;
     }
     
-    /* 功能选择卡片 */
-    .function-card {
+    .lib-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 20px;
-        border-radius: 15px;
-        margin: 15px 0;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
         cursor: pointer;
         transition: all 0.3s;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    .function-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+    .lib-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
     }
-    .function-card.active {
+    .lib-card.selected {
         border: 3px solid #ffd700;
-        background: linear-gradient(135deg, #5a67d8 0%, #6b46a1 100%);
     }
-    .function-icon {
-        font-size: 48px;
-        margin-bottom: 10px;
-    }
-    .function-title {
-        font-size: 20px;
+    .lib-name {
+        font-size: 18px;
         font-weight: bold;
-        margin-bottom: 5px;
     }
-    .function-desc {
-        font-size: 14px;
+    .lib-stats {
+        font-size: 12px;
         opacity: 0.9;
     }
     
-    /* 主要内容区域卡片 */
+    .asset-card {
+        background: white;
+        border: 1px solid #e0e7ff;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .asset-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    .asset-md5 {
+        font-family: monospace;
+        background: #f3f4f6;
+        padding: 3px 8px;
+        border-radius: 5px;
+        font-size: 12px;
+    }
+    .asset-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: bold;
+        margin-right: 5px;
+    }
+    .badge-success { background: #d4edda; color: #155724; }
+    .badge-warning { background: #fff3cd; color: #856404; }
+    .badge-info { background: #d1ecf1; color: #0c5460; }
+    
     .content-card {
         background: white;
         padding: 30px;
@@ -85,7 +107,6 @@ st.markdown("""
         border-bottom: 2px solid #667eea;
     }
     
-    /* 结果卡片 */
     .result-card {
         background: #f8f9fa;
         border-left: 4px solid #667eea;
@@ -93,21 +114,11 @@ st.markdown("""
         border-radius: 10px;
         margin: 10px 0;
     }
-    .result-success {
-        border-left-color: #28a745;
-        background: #d4edda;
-    }
-    .result-error {
-        border-left-color: #dc3545;
-        background: #f8d7da;
-    }
     
-    /* 进度条美化 */
     .stProgress > div > div > div > div {
         background: linear-gradient(90deg, #667eea, #764ba2);
     }
     
-    /* 按钮样式 */
     .stButton > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -123,46 +134,62 @@ st.markdown("""
         box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
     }
     
-    /* 指标卡片 */
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    .file-item {
+        padding: 10px;
+        margin: 5px 0;
+        background: #f0f2f6;
+        border-radius: 8px;
+        border-left: 3px solid #667eea;
     }
-    .metric-value {
-        font-size: 32px;
+    .file-name {
         font-weight: bold;
+        color: #1e1e2f;
     }
-    .metric-label {
-        font-size: 14px;
-        opacity: 0.9;
+    .file-info {
+        font-size: 12px;
+        color: #666;
     }
     
-    /* 视频信息卡片 */
+    .upload-area {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 30px;
+        text-align: center;
+        background-color: #f8f9ff;
+        margin: 10px 0 20px 0;
+        transition: all 0.3s;
+    }
+    .upload-area:hover {
+        background-color: #e8eaff;
+        border-color: #764ba2;
+    }
+    .upload-icon {
+        font-size: 48px;
+        color: #667eea;
+        margin-bottom: 10px;
+    }
+    .upload-text {
+        color: #1e1e2f;
+        font-weight: bold;
+    }
+    .upload-hint {
+        color: #666;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+    
     .video-info {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 15px;
         border-radius: 10px;
         margin: 10px 0;
     }
-    
-    /* 字幕样式预览 */
-    .subtitle-preview {
-        background: #1e1e2f;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 20px 0;
-        text-align: center;
+    .video-info.exists {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
     }
-    .preview-text {
-        font-size: 24px;
-        font-weight: bold;
-        padding: 10px;
-        display: inline-block;
+    .video-info.missing {
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -170,7 +197,7 @@ st.markdown("""
 # 初始化session state
 def init_session_state():
     if 'current_page' not in st.session_state:
-        st.session_state.current_page = "数据准备"
+        st.session_state.current_page = "资产中心"
     if 'processing' not in st.session_state:
         st.session_state.processing = False
     if 'last_result' not in st.session_state:
@@ -183,153 +210,368 @@ def init_session_state():
         st.session_state.rag_files = []
     if 'analysis_files' not in st.session_state:
         st.session_state.analysis_files = []
+    if 'libraries' not in st.session_state:
+        st.session_state.libraries = []
+    if 'selected_lib' not in st.session_state:
+        st.session_state.selected_lib = "default_lib"
+    if 'global_assets' not in st.session_state:
+        st.session_state.global_assets = []
+    if 'lib_info' not in st.session_state:
+        st.session_state.lib_info = {}
+    if 'show_lib_manager' not in st.session_state:
+        st.session_state.show_lib_manager = False
 
-# 刷新文件列表
-def refresh_file_lists():
-    st.session_state.video_files = server.get_video_files()
-    st.session_state.transcript_files = server.get_transcript_files()
-    st.session_state.rag_files = server.get_rag_files()
-    st.session_state.analysis_files = server.get_analysis_files()
+def safe_display_filename(filename: str) -> str:
+    """安全显示文件名（解码URL编码）"""
+    try:
+        return urllib.parse.unquote(filename)
+    except:
+        return filename
+
+# 刷新数据
+def refresh_data():
+    with st.spinner("刷新数据..."):
+        st.session_state.video_files = server.get_video_files()
+        st.session_state.transcript_files = server.get_transcript_files()
+        st.session_state.rag_files = server.get_rag_files()
+        st.session_state.analysis_files = server.get_analysis_files()
+        st.session_state.libraries = server.get_libraries()
+        st.session_state.global_assets = server.get_global_assets()
+        
+        if st.session_state.selected_lib:
+            st.session_state.lib_info = server.get_library_info(st.session_state.selected_lib)
 
 # 侧边栏
 def render_sidebar():
     with st.sidebar:
-        st.markdown("## 🎬 视频智能剪辑")
+        st.markdown("## 🎬 SSOT 视频知识库")
         st.markdown("---")
         
-        # 功能卡片
-        functions = [
-            {
-                "id": "数据准备",
-                "icon": "📊",
-                "title": "数据准备",
-                "desc": "提取音频、文字、画面"
-            },
-            {
-                "id": "RAG构建",
-                "icon": "🔍",
-                "title": "RAG知识库",
-                "desc": "构建向量数据库"
-            },
-            {
-                "id": "智能剪辑",
-                "icon": "✂️",
-                "title": "智能剪辑",
-                "desc": "根据指令剪辑视频"
-            },
-            {
-                "id": "横屏转竖屏",
-                "icon": "📱",
-                "title": "横屏转竖屏",
-                "desc": "转换为竖屏格式"
-            },
-            {
-                "id": "添加字幕",
-                "icon": "📝",
-                "title": "添加字幕",
-                "desc": "为视频添加字幕"
-            }
-        ]
+        st.markdown("### 📚 知识库管理")
         
-        for func in functions:
-            is_active = (st.session_state.current_page == func["id"])
-            active_class = "active" if is_active else ""
+        if st.session_state.libraries:
+            current_lib = st.session_state.selected_lib
+            lib_info = server.get_library_info(current_lib)
             
-            col1, col2, col3 = st.columns([1, 8, 1])
-            with col2:
-                if st.button(
-                    func["title"],
-                    key=f"nav_{func['id']}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary"
-                ):
-                    st.session_state.current_page = func["id"]
-                    st.rerun()
+            with st.expander(f"📌 当前库: {current_lib} (资产: {lib_info.get('asset_count', 0)} | RAG: {lib_info.get('rag_count', 0)})", expanded=True):
+                for lib in st.session_state.libraries:
+                    lib_info = server.get_library_info(lib)
+                    is_selected = (lib == st.session_state.selected_lib)
+                    
+                    col1, col2, col3 = st.columns([6, 2, 1])
+                    
+                    with col1:
+                        if is_selected:
+                            st.markdown(f"**🔵 {lib}**")
+                        else:
+                            st.markdown(f"📁 {lib}")
+                    
+                    with col2:
+                        st.markdown(f"📊 {lib_info.get('asset_count', 0)}/{lib_info.get('rag_count', 0)}")
+                    
+                    with col3:
+                        if not is_selected:
+                            if st.button("选择", key=f"select_{lib}", help=f"切换到知识库 {lib}"):
+                                st.session_state.selected_lib = lib
+                                refresh_data()
+                                st.rerun()
+                        else:
+                            st.markdown("✅")
+                    
+                    if lib != st.session_state.libraries[-1]:
+                        st.markdown("---")
+            
+            with st.expander("⚙️ 库管理", expanded=False):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    new_lib = st.text_input("新库名称", key="new_lib_name", label_visibility="collapsed", placeholder="输入新知识库名称")
+                with col2:
+                    if st.button("➕ 创建", key="create_lib", use_container_width=True):
+                        if new_lib:
+                            result = server.create_library(new_lib)
+                            if result["success"]:
+                                st.success(f"✅ {result['message']}")
+                                refresh_data()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {result['message']}")
+                
+                if st.session_state.libraries:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        lib_to_delete = st.selectbox(
+                            "选择要删除的库",
+                            [l for l in st.session_state.libraries if l != "default_lib"],
+                            key="delete_lib_select",
+                            label_visibility="collapsed",
+                            placeholder="选择要删除的知识库"
+                        )
+                    with col2:
+                        if st.button("🗑️ 删除", key="delete_lib", use_container_width=True):
+                            if lib_to_delete:
+                                result = server.delete_library(lib_to_delete)
+                                if result["success"]:
+                                    st.success(f"✅ {result['message']}")
+                                    if st.session_state.selected_lib == lib_to_delete:
+                                        st.session_state.selected_lib = "default_lib"
+                                    refresh_data()
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {result['message']}")
+        else:
+            st.info("暂无知识库，请先创建")
+            
+            with st.expander("⚙️ 创建第一个知识库", expanded=True):
+                new_lib = st.text_input("新库名称", key="first_lib_name", placeholder="输入知识库名称")
+                if st.button("➕ 创建", key="create_first_lib", use_container_width=True):
+                    if new_lib:
+                        result = server.create_library(new_lib)
+                        if result["success"]:
+                            st.success(f"✅ {result['message']}")
+                            st.session_state.selected_lib = new_lib
+                            refresh_data()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['message']}")
         
         st.markdown("---")
         
-        # 刷新按钮
-        if st.button("🔄 刷新文件列表", use_container_width=True):
-            refresh_file_lists()
+        st.markdown("### 🛠️ 系统工具")
+        with st.expander("工具", expanded=False):
+            if st.button("📦 迁移视频到池", use_container_width=True):
+                with st.spinner("正在迁移视频..."):
+                    result = server.migrate_videos_to_pool()
+                    st.success(f"迁移完成: {len(result['migrated'])} 成功, {len(result['skipped'])} 已存在, {len(result['failed'])} 失败")
+                    
+                    if result['failed']:
+                        st.error("失败列表:")
+                        for f in result['failed']:
+                            st.caption(f"  • {f['file']}: {f['reason']}")
+                    
+                    refresh_data()
+            
+            if st.button("🔧 检查缺失视频", use_container_width=True):
+                if st.session_state.selected_lib:
+                    with st.spinner("正在检查..."):
+                        result = server.fix_missing_video_links(st.session_state.selected_lib)
+                        if 'error' in result:
+                            st.error(f"检查失败: {result['error']}")
+                        else:
+                            st.info(f"总计 {result.get('total', 0)} 条记录，缺失 {result.get('missing', 0)} 个视频")
+        
+        st.markdown("---")
+        
+        pages = {
+            "🏭 资产中心": "资产中心",
+            "📊 数据准备": "数据准备",
+            "🔍 RAG构建": "RAG构建",
+            "✂️ 智能剪辑": "智能剪辑",
+            "📱 竖屏转换": "竖屏转换",
+            "📝 添加字幕": "添加字幕"
+        }
+        
+        for display, page_id in pages.items():
+            if st.button(
+                display,
+                key=f"nav_{page_id}",
+                use_container_width=True,
+                type="primary" if st.session_state.current_page == page_id else "secondary"
+            ):
+                st.session_state.current_page = page_id
+                st.rerun()
+        
+        st.markdown("---")
+        
+        if st.session_state.selected_lib:
+            lib_info = st.session_state.lib_info
+            st.markdown(f"""
+            ### 📊 当前库: {st.session_state.selected_lib}
+            - 资产数: {lib_info.get('asset_count', 0)}
+            - RAG条数: {lib_info.get('rag_count', 0)}
+            """)
+
+# 页面: 资产中心
+def page_asset_center():
+    st.markdown('<div class="content-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🏭 资产中心 - 全局资产池</div>', unsafe_allow_html=True)
+    st.markdown("全局资产池存储所有视频及其分析结果，是SSOT的核心")
+    
+    if not st.session_state.global_assets:
+        st.info("全局资产池为空，请先上传视频")
+    else:
+        st.markdown(f"**共 {len(st.session_state.global_assets)} 个资产**")
+        
+        for asset in st.session_state.global_assets:
+            with st.expander(f"📹 {asset.get('display_name', asset.get('filename', '未知'))}"):
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"""
+                    **MD5:** `{asset['md5']}`  
+                    **原名:** {asset.get('display_name', '未知')}  
+                    **大小:** {asset.get('size_formatted', '未知') if 'size_formatted' in asset else server.format_size(os.path.getsize(asset['path']) if os.path.exists(asset['path']) else 0)}
+                    """)
+                
+                with col2:
+                    st.markdown("**分析状态:**")
+                    if asset.get('has_asr'):
+                        st.markdown("✅ ASR完成")
+                    else:
+                        st.markdown("⏳ ASR待处理")
+                    
+                    if asset.get('has_cleaned'):
+                        st.markdown("✅ 清洗完成")
+                    else:
+                        st.markdown("⏳ 清洗待处理")
+                
+                with col3:
+                    if st.button("📋 详情", key=f"detail_{asset['md5']}"):
+                        asset_info = server.get_asset_info(asset['md5'])
+                        if asset_info['success']:
+                            st.session_state['current_asset'] = asset_info['asset_info']
+                            st.rerun()
+                    
+                    if st.button("🗑️ 删除", key=f"delete_{asset['md5']}"):
+                        result = server.delete_asset(asset['md5'])
+                        if result['success']:
+                            st.success(f"✅ {result['message']}")
+                            refresh_data()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['message']}")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    if 'current_asset' in st.session_state:
+        asset = st.session_state['current_asset']
+        st.markdown('<div class="content-card">', unsafe_allow_html=True)
+        st.markdown(f"### 资产详情: {asset.get('original_name', asset['md5'])}")
+        
+        if not asset.get('video_exists', False):
+            st.warning("⚠️ 视频文件不存在，请运行迁移工具")
+        
+        tabs = st.tabs(["📄 元数据", "📝 转录", "🖼️ 关键帧", "✂️ 片段缓存"])
+        
+        with tabs[0]:
+            if asset.get('metadata'):
+                st.json(asset['metadata'])
+            else:
+                st.info("暂无元数据")
+        
+        with tabs[1]:
+            if asset.get('has_raw_trans'):
+                trans_path = os.path.join(asset['cache_dir'], "raw_trans.json")
+                if os.path.exists(trans_path):
+                    with open(trans_path, 'r', encoding='utf-8') as f:
+                        trans_data = json.load(f)
+                    st.json(trans_data[:5] if len(trans_data) > 5 else trans_data)
+            else:
+                st.info("暂无转录数据")
+        
+        with tabs[2]:
+            keyframes = asset.get('keyframes', [])
+            if keyframes:
+                cols = st.columns(3)
+                for i, kf in enumerate(keyframes[:6]):
+                    with cols[i % 3]:
+                        st.image(kf['path'], caption=f"帧 {kf['name']}")
+            else:
+                st.info("暂无关键帧")
+        
+        with tabs[3]:
+            slices = asset.get('slices', [])
+            if slices:
+                for slice_item in slices[:5]:
+                    st.markdown(f"""
+                    **片段:** {slice_item['start']:.1f}s - {slice_item['end']:.1f}s  
+                    大小: {server.format_size(slice_item['size'])}
+                    """)
+            else:
+                st.info("暂无缓存片段")
+        
+        if st.button("关闭详情"):
+            del st.session_state['current_asset']
             st.rerun()
         
-        # 显示统计信息
-        st.markdown("### 📊 统计")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("视频文件", len(st.session_state.video_files))
-        with col2:
-            st.metric("转录文件", len(st.session_state.transcript_files))
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("RAG文件", len(st.session_state.rag_files))
-        with col2:
-            st.metric("分析结果", len(st.session_state.analysis_files))
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面1: 数据准备
+# 页面: 数据准备
 def page_data_processing():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 数据准备</div>', unsafe_allow_html=True)
-    st.markdown("从视频中提取音频、文字转录和画面内容")
+    st.markdown("上传视频并进行分析，结果存入全局资产池")
     
-    if not st.session_state.video_files:
-        st.warning("⚠️ 没有找到视频文件，请将视频放入 input 目录")
-        if st.button("刷新文件列表"):
-            refresh_file_lists()
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
+    st.caption(f"📌 当前上传限制: {st.get_option('server.maxUploadSize')}MB（可在 .streamlit/config.toml 中调整）")
     
-    col1, col2 = st.columns([1, 1])
+    st.markdown("### 📤 拖拽上传新视频")
     
-    with col1:
-        st.markdown("### 1. 选择视频文件")
-        selected_video = st.selectbox(
-            "选择要处理的视频",
-            st.session_state.video_files,
-            key="dp_video_select",
-            label_visibility="collapsed"
-        )
+    st.markdown("""
+    <div class="upload-area">
+        <div class="upload-icon">📁</div>
+        <div class="upload-text">拖拽视频文件到此处</div>
+        <div class="upload-hint">或点击下方按钮选择文件（支持最大2GB）</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader(
+        "选择视频文件",
+        type=['mp4', 'mov', 'avi', 'mkv'],
+        key="video_uploader",
+        label_visibility="collapsed",
+        accept_multiple_files=False
+    )
+    
+    if uploaded_file is not None:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        file_size_gb = file_size_mb / 1024
+        size_display = f"{file_size_mb:.1f} MB" if file_size_mb < 1024 else f"{file_size_gb:.2f} GB"
         
-        if selected_video:
-            video_path = os.path.join(server.INPUT_VIDEO_DIR, selected_video)
-            file_size = os.path.getsize(video_path) / (1024 * 1024)
-            st.markdown(f"""
-            <div class="video-info">
-                <b>🎬 {selected_video}</b><br>
-                大小: {file_size:.1f} MB
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("### 2. 处理选项")
-        process_type = st.radio(
-            "选择处理类型",
-            ["完整处理", "仅语音转文字", "仅画面分析"],
-            horizontal=True
-        )
+        st.info(f"📹 已选择: {uploaded_file.name} ({size_display})")
         
-        if process_type == "完整处理":
-            st.info("将执行：音频提取 → 语音转文字 → 关键帧提取 → 画面分析 → 数据整合")
-        elif process_type == "仅语音转文字":
-            st.info("只进行语音转文字处理")
-        else:
-            st.info("只进行画面分析处理")
-    
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 开始处理", use_container_width=True, type="primary"):
-            if selected_video:
-                with st.spinner("正在处理中，请稍候..."):
-                    # 这里简化处理，实际应该根据process_type调用不同函数
-                    result = server.data_processing(selected_video)
+        max_size = st.get_option('server.maxUploadSize')
+        if file_size_mb > max_size * 0.9:
+            st.warning(f"⚠️ 文件较大，接近上传限制 {max_size}MB，建议调整 config.toml 增加限制")
+        
+        category = st.text_input("分类标签", value="general", key="upload_category")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("🚀 处理上传的视频", use_container_width=True, type="primary"):
+                with st.spinner("正在上传并处理视频（大文件可能需要较长时间）..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    file_path = os.path.join(server.INPUT_VIDEO_DIR, uploaded_file.name)
+                    
+                    base, ext = os.path.splitext(uploaded_file.name)
+                    counter = 1
+                    while os.path.exists(file_path):
+                        new_name = f"{base}_{counter}{ext}"
+                        file_path = os.path.join(server.INPUT_VIDEO_DIR, new_name)
+                        counter += 1
+                    
+                    chunk_size = 32 * 1024 * 1024
+                    bytes_written = 0
+                    total_bytes = uploaded_file.size
+                    
+                    with open(file_path, 'wb') as f:
+                        while True:
+                            chunk = uploaded_file.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                            progress = bytes_written / total_bytes
+                            progress_bar.progress(progress)
+                            status_text.text(f"上传进度: {progress:.1%} ({bytes_written / (1024*1024):.1f}MB / {file_size_mb:.1f}MB)")
+                    
+                    status_text.text("上传完成，开始处理视频...")
+                    
+                    result = server.data_processing(os.path.basename(file_path), category)
                     
                     if result["success"]:
                         st.success(f"✅ {result['message']}")
                         
-                        # 显示结果指标
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("转录片段", result.get("transcript_count", 0))
@@ -339,93 +581,203 @@ def page_data_processing():
                             st.metric("视觉片段", result.get("visual_segments_count", 0))
                         
                         st.balloons()
-                        refresh_file_lists()
+                        refresh_data()
                     else:
                         st.error(f"❌ {result['message']}")
+    
+    st.markdown("---")
+    st.markdown("### 或者从现有文件选择")
+    
+    if not st.session_state.video_files:
+        st.warning("⚠️ 没有找到现有视频文件，请上传新视频")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+    
+    video_options = {f['name']: f['name'] for f in st.session_state.video_files}
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("### 1. 选择视频文件")
+        selected_video_display = st.selectbox(
+            "选择要处理的视频",
+            list(video_options.keys()),
+            key="dp_video_select",
+            label_visibility="collapsed",
+            format_func=lambda x: safe_display_filename(x)
+        )
+        selected_video = video_options[selected_video_display]
+    
+    with col2:
+        st.markdown("### 2. 处理选项")
+        category = st.text_input("分类标签", value="general", key="existing_category")
+    
+    st.markdown("---")
+    
+    if st.button("🚀 开始处理选中的视频", use_container_width=True, type="primary"):
+        if selected_video:
+            with st.spinner("正在处理中，请稍候..."):
+                result = server.data_processing(selected_video, category)
+                
+                if result["success"]:
+                    st.success(f"✅ {result['message']}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("转录片段", result.get("transcript_count", 0))
+                    with col2:
+                        st.metric("关键帧", result.get("keyframes_count", 0))
+                    with col3:
+                        st.metric("视觉片段", result.get("visual_segments_count", 0))
+                    
+                    st.balloons()
+                    refresh_data()
+                else:
+                    st.error(f"❌ {result['message']}")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面2: RAG构建
+# 页面: RAG构建
 def page_rag_building():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">🔍 RAG知识库构建</div>', unsafe_allow_html=True)
-    st.markdown("构建向量知识库，支持语义搜索视频内容")
+    st.markdown(f"当前知识库: **{st.session_state.selected_lib}**")
+    
+    st.markdown("### 关联资产到知识库")
+    if st.session_state.global_assets:
+        lib_assets = st.session_state.lib_info.get('assets', {})
+        current_md5s = list(lib_assets.keys())
+        
+        available_assets = []
+        for asset in st.session_state.global_assets:
+            if asset['md5'] not in current_md5s:
+                available_assets.append({
+                    "md5": asset['md5'],
+                    "display_name": asset.get('display_name', asset['filename']),
+                    "filename": asset['filename']
+                })
+        
+        if available_assets:
+            asset_options = {a['display_name']: a['md5'] for a in available_assets}
+            
+            selected_display_names = st.multiselect(
+                "选择要关联的资产",
+                options=sorted(asset_options.keys()),
+                format_func=lambda x: x
+            )
+            
+            selected_md5s = [asset_options[name] for name in selected_display_names]
+            
+            if st.button("🔗 关联选中资产"):
+                progress_bar = st.progress(0)
+                for i, md5 in enumerate(selected_md5s):
+                    result = server.add_asset_to_library(st.session_state.selected_lib, md5)
+                    if result['success']:
+                        st.toast(f"✅ 已关联: {selected_display_names[i]}")
+                    else:
+                        st.error(f"❌ 关联失败: {result['message']}")
+                    progress_bar.progress((i + 1) / len(selected_md5s))
+                
+                refresh_data()
+                st.rerun()
+        else:
+            st.info("所有资产都已关联到此库")
+    else:
+        st.info("全局资产池为空，请先处理视频")
+    
+    st.markdown("---")
     
     tabs = st.tabs(["🧹 数据清洗", "🏗️ 构建知识库", "🔎 语义搜索"])
     
-    # 数据清洗标签
     with tabs[0]:
         st.markdown("### 清洗转录数据为RAG格式")
         
-        if not st.session_state.transcript_files:
+        if not st.session_state.transcript_files and not st.session_state.global_assets:
             st.warning("没有找到转录文件，请先进行数据准备")
         else:
-            col1, col2 = st.columns([2, 1])
+            options = []
+            if st.session_state.transcript_files:
+                for f in st.session_state.transcript_files:
+                    options.append(f['name'])
             
-            with col1:
-                selected_json = st.selectbox(
-                    "选择要清洗的转录文件",
-                    st.session_state.transcript_files,
+            for asset in st.session_state.global_assets:
+                if asset.get('has_raw_trans'):
+                    options.append(f"[资产] {asset.get('display_name', asset['filename'])}")
+            
+            if options:
+                selected_option = st.selectbox(
+                    "选择要清洗的数据源",
+                    options,
                     key="rag_clean_select"
                 )
-            
-            with col2:
-                category = st.text_input(
-                    "分类标签",
-                    value="general",
-                    help="为数据添加分类标签"
-                )
-            
-            if st.button("🧹 开始清洗", use_container_width=True):
-                with st.spinner("正在清洗数据..."):
-                    result = server.rag_building(
-                        source_json=selected_json,
-                        category=category
-                    )
-                    
-                    if result["success"]:
-                        st.success(f"✅ 清洗完成!")
-                        st.info(f"生成文件: {result['rag_filename']}")
-                        st.balloons()
-                        refresh_file_lists()
-                    else:
-                        st.error(f"❌ {result['message']}")
+                
+                category = st.text_input("分类标签", value="general", key="clean_category")
+                
+                if st.button("🧹 开始清洗", use_container_width=True):
+                    with st.spinner("正在清洗数据..."):
+                        if selected_option.startswith("[资产]"):
+                            md5 = next((a['md5'] for a in st.session_state.global_assets if a.get('display_name', a['filename']) in selected_option), None)
+                            if md5:
+                                merged_path = os.path.join(server.GLOBAL_CACHE_DIR, md5, "merged_raw.json")
+                                result = server.rag_building(
+                                    source_json=merged_path,
+                                    category=category,
+                                    lib_name=st.session_state.selected_lib
+                                )
+                        else:
+                            result = server.rag_building(
+                                source_json=selected_option,
+                                category=category,
+                                lib_name=st.session_state.selected_lib
+                            )
+                        
+                        if result["success"]:
+                            st.success(f"✅ 清洗完成!")
+                            st.info(f"生成文件: {result['rag_filename']}")
+                            st.balloons()
+                            refresh_data()
+                        else:
+                            st.error(f"❌ {result['message']}")
+            else:
+                st.warning("没有可用的数据源")
     
-    # 构建知识库标签
     with tabs[1]:
         st.markdown("### 构建向量知识库")
         
         if not st.session_state.rag_files:
             st.warning("没有找到清洗后的RAG文件，请先进行数据清洗")
         else:
-            selected_rag = st.selectbox(
+            rag_options = {f['name']: f['name'] for f in st.session_state.rag_files}
+            
+            selected_rag_display = st.selectbox(
                 "选择RAG文件",
-                st.session_state.rag_files,
-                key="rag_build_select"
+                list(rag_options.keys()),
+                key="rag_build_select",
+                format_func=lambda x: safe_display_filename(x)
             )
+            selected_rag = rag_options[selected_rag_display]
             
             if st.button("🏗️ 开始构建", use_container_width=True, type="primary"):
                 with st.spinner("正在构建知识库..."):
                     progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # 模拟进度
                     for i in range(101):
                         progress_bar.progress(i / 100)
-                        status_text.text(f"构建进度: {i}%")
-                        time.sleep(0.05)
+                        time.sleep(0.02)
                     
-                    result = server.rag_building(rag_filename=selected_rag)
+                    result = server.rag_building(
+                        rag_filename=selected_rag,
+                        lib_name=st.session_state.selected_lib
+                    )
                     
                     if result["success"]:
                         st.success(f"✅ {result['message']}")
                         st.metric("总数据量", result.get("total_items", 0))
                         st.metric("向量库数量", result.get("collection_count", 0))
                         st.balloons()
+                        refresh_data()
                     else:
                         st.error(f"❌ {result['message']}")
     
-    # 语义搜索标签
     with tabs[2]:
         st.markdown("### 语义搜索")
         
@@ -439,87 +791,152 @@ def page_rag_building():
         with col2:
             top_k = st.number_input("返回结果数", min_value=1, max_value=20, value=5)
         
+        with st.expander("高级选项"):
+            expand_context = st.checkbox("扩展上下文", value=True)
+        
         if query and st.button("🔎 搜索", use_container_width=True):
             with st.spinner("正在搜索..."):
-                result = server.rag_search(query, top_k=top_k)
+                result = server.rag_search(
+                    query=query,
+                    top_k=top_k,
+                    lib_name=st.session_state.selected_lib,
+                    expand_context=expand_context
+                )
                 
                 if result["success"]:
                     st.success(f"找到 {len(result['results'])} 个相关结果")
                     
                     for i, item in enumerate(result["results"]):
-                        st.markdown(f"""
-                        <div class="result-card">
-                            <h4>结果 {i+1}</h4>
-                            <p><b>时间:</b> {item['start']:.1f}s - {item['end']:.1f}s</p>
-                            <p><b>类型:</b> {item['type']}</p>
-                            <p><b>分类:</b> {item['category']}</p>
-                            <p><b>内容:</b> {item['content'][:200]}...</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        display_name = item.get('original_name', item.get('video_name', '未知视频'))
+                        if not item.get('video_exists', False):
+                            display_name = f"⚠️ {display_name} (视频缺失)"
+                        
+                        with st.expander(f"结果 {i+1} - {display_name}"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown(f"**时间范围:** {item['start']:.1f}s - {item['end']:.1f}s")
+                                st.markdown(f"**类型:** {item['type']}")
+                                st.markdown(f"**视频MD5:** `{item['video_md5']}`")
+                            with col2:
+                                st.markdown(f"**分类:** {item['category']}")
+                                if item.get('is_expanded'):
+                                    st.markdown("**✨ 已扩展上下文**")
+                            
+                            st.markdown("**内容:**")
+                            st.markdown(f">{item['content']}")
+                            
+                            st.markdown("**📹 相关视频:**")
+                            
+                            video_path = item.get('video_path')
+                            
+                            if video_path and os.path.exists(video_path):
+                                st.success(f"✅ 找到视频: {os.path.basename(video_path)}")
+                                
+                                vid_col1, vid_col2 = st.columns([3, 1])
+                                
+                                with vid_col1:
+                                    st.video(
+                                        video_path,
+                                        start_time=int(item['start'])
+                                    )
+                                
+                                with vid_col2:
+                                    st.markdown(f"**视频名称:**")
+                                    st.caption(item.get('original_name', item.get('video_name', '未知')))
+                                    st.markdown(f"**文件大小:** {os.path.getsize(video_path)/1024/1024:.1f}MB")
+                            else:
+                                st.error(f"❌ 视频文件不存在")
+                                
+                                if item.get('video_md5'):
+                                    st.markdown("**检查的路径:**")
+                                    for ext in ['.mp4', '.mov', '.avi', '.mkv']:
+                                        pool_path = os.path.join(server.VIDEO_POOL_DIR, f"{item['video_md5']}{ext}")
+                                        exists = "✅" if os.path.exists(pool_path) else "❌"
+                                        st.caption(f"{exists} {pool_path}")
                 else:
                     st.info(result["message"])
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面3: 智能剪辑
+# 页面: 智能剪辑
 def page_video_editing():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">✂️ 智能视频剪辑</div>', unsafe_allow_html=True)
-    st.markdown("根据文字指令智能剪辑视频")
+    st.markdown(f"当前知识库: **{st.session_state.selected_lib}**")
     
-    if not st.session_state.video_files:
-        st.warning("没有找到视频文件，请先上传视频")
+    lib_info = server.get_library_info(st.session_state.selected_lib)
+    assets = lib_info.get('assets', {})
+    
+    if not assets:
+        st.warning("当前知识库没有资产，请先关联资产")
         st.markdown('</div>', unsafe_allow_html=True)
         return
+    
+    asset_options = {}
+    for md5, info in assets.items():
+        display_name = info.get('display_name', info.get('filename', md5))
+        if not info.get('exists', True):
+            display_name = f"⚠️ {display_name} (视频缺失)"
+        asset_options[display_name] = {
+            'md5': md5,
+            'path': info.get('path'),
+            'filename': info.get('filename'),
+            'exists': info.get('exists', False)
+        }
+    
+    sorted_display_names = sorted(asset_options.keys())
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.markdown("### 1. 选择视频")
-        selected_video = st.selectbox(
+        selected_display = st.selectbox(
             "选择要剪辑的视频",
-            st.session_state.video_files,
-            key="edit_video_select",
-            label_visibility="collapsed"
+            options=sorted_display_names,
+            key="edit_asset_select",
+            label_visibility="collapsed",
+            format_func=lambda x: x
         )
+        
+        selected_asset = asset_options[selected_display]
+        selected_md5 = selected_asset['md5']
+        asset_path = selected_asset['path']
+        
+        if asset_path and os.path.exists(asset_path):
+            st.video(asset_path)
+        elif selected_asset.get('exists'):
+            st.error(f"视频文件不存在: {asset_path}")
+        else:
+            st.warning("视频文件缺失，请运行迁移工具")
     
     with col2:
         st.markdown("### 2. 剪辑参数")
-        max_duration = st.slider(
-            "最大时长（秒）",
-            min_value=10,
-            max_value=300,
-            value=60,
-            step=10
-        )
+        max_duration = st.slider("最大时长（秒）", 10, 300, 60, 10)
     
     st.markdown("### 3. 剪辑要求")
     instruction = st.text_area(
         "输入剪辑要求",
-        placeholder="例如: 找出切肉的画面、选择讲解关键技术的部分、保留精彩瞬间...",
-        height=100,
-        label_visibility="collapsed"
+        placeholder="例如: 找出切肉的画面、选择讲解关键技术的部分...",
+        height=100
     )
     
     if st.button("🎬 开始智能剪辑", use_container_width=True, type="primary"):
         if not instruction:
             st.error("请输入剪辑要求")
-        elif not selected_video:
+        elif not selected_md5:
             st.error("请选择视频")
         else:
             with st.spinner("正在剪辑视频..."):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # 模拟进度
-                steps = ["分析文本", "选择片段", "剪辑视频", "合并片段"]
-                for i, step in enumerate(steps):
-                    status_text.text(f"{step}...")
-                    progress_bar.progress((i + 1) * 25)
-                    time.sleep(1)
+                video_filename = selected_asset['filename']
+                if not os.path.exists(os.path.join(server.INPUT_VIDEO_DIR, video_filename)):
+                    for ext in ['.mp4', '.mov', '.avi', '.mkv']:
+                        pool_path = os.path.join(server.VIDEO_POOL_DIR, f"{selected_md5}{ext}")
+                        if os.path.exists(pool_path):
+                            video_filename = f"{selected_md5}{ext}"
+                            break
                 
                 result = server.video_editing(
-                    video_filename=selected_video,
+                    video_filename=video_filename,
                     user_instruction=instruction,
                     max_duration=max_duration
                 )
@@ -527,7 +944,6 @@ def page_video_editing():
                 if result["success"]:
                     st.success(f"✅ {result['message']}")
                     
-                    # 显示结果
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("原始片段", len(result.get("segments", [])))
@@ -536,47 +952,48 @@ def page_video_editing():
                     with col3:
                         st.metric("总时长", f"{result.get('total_duration', 0):.1f}秒")
                     
-                    if result.get("output_path"):
-                        st.info(f"输出文件: {result['output_path']}")
+                    if result.get("output_path") and os.path.exists(result["output_path"]):
+                        st.video(result["output_path"])
                     
                     st.balloons()
-                    refresh_file_lists()
                 else:
                     st.error(f"❌ {result['message']}")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面4: 横屏转竖屏
+# 页面: 竖屏转换
 def page_convert_to_vertical():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📱 横屏转竖屏</div>', unsafe_allow_html=True)
-    st.markdown("将横屏视频转换为竖屏格式")
     
     if not st.session_state.video_files:
         st.warning("没有找到视频文件，请先上传视频")
         st.markdown('</div>', unsafe_allow_html=True)
         return
     
+    video_options = {f['name']: f['name'] for f in st.session_state.video_files}
+    
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.markdown("### 1. 选择视频")
-        selected_video = st.selectbox(
+        selected_video_display = st.selectbox(
             "选择要转换的视频",
-            st.session_state.video_files,
+            list(video_options.keys()),
             key="vertical_video_select",
-            label_visibility="collapsed"
+            format_func=lambda x: safe_display_filename(x)
         )
+        selected_video = video_options[selected_video_display]
     
     with col2:
         st.markdown("### 2. 转换设置")
         conversion_method = st.radio(
             "转换方法",
-            ["solid", "blur", "crop"],
+            ["solid", "blur", "static"],
             format_func=lambda x: {
-                "solid": "纯色填充（最快）",
+                "solid": "纯色填充",
                 "blur": "模糊背景",
-                "crop": "智能裁剪"
+                "static": "静态背景"
             }[x],
             horizontal=True
         )
@@ -590,193 +1007,91 @@ def page_convert_to_vertical():
             
             if result["success"]:
                 st.success(f"✅ {result['message']}")
-                if result.get("output_path"):
-                    st.info(f"输出文件: {result['output_path']}")
+                if result.get("output_path") and os.path.exists(result["output_path"]):
+                    st.video(result["output_path"])
                 st.balloons()
-                refresh_file_lists()
             else:
                 st.error(f"❌ {result['message']}")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面5: 添加字幕（修复版本）
+# 页面: 添加字幕
 def page_add_subtitles():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📝 添加字幕</div>', unsafe_allow_html=True)
-    st.markdown("为视频添加字幕")
     
     if not st.session_state.video_files:
         st.warning("没有找到视频文件，请先上传视频")
         st.markdown('</div>', unsafe_allow_html=True)
         return
     
-    if not st.session_state.transcript_files:
-        st.warning("没有找到转录文件，请先进行数据准备")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
+    video_options = {f['name']: f['name'] for f in st.session_state.video_files}
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.markdown("### 1. 选择视频")
-        selected_video = st.selectbox(
+        selected_video_display = st.selectbox(
             "选择视频",
-            st.session_state.video_files,
+            list(video_options.keys()),
             key="subtitle_video_select",
-            label_visibility="collapsed"
+            format_func=lambda x: safe_display_filename(x)
         )
+        selected_video = video_options[selected_video_display]
         
-        if selected_video:
-            video_path = os.path.join(server.INPUT_VIDEO_DIR, selected_video)
-            file_size = os.path.getsize(video_path) / (1024 * 1024)
-            st.markdown(f"""
-            <div class="video-info">
-                <b>🎬 {selected_video}</b><br>
-                大小: {file_size:.1f} MB
-            </div>
-            """, unsafe_allow_html=True)
+        video_path = os.path.join(server.INPUT_VIDEO_DIR, selected_video)
+        if os.path.exists(video_path):
+            st.video(video_path)
     
     with col2:
-        st.markdown("### 2. 选择字幕文件")
-        selected_transcript = st.selectbox(
-            "选择字幕文件",
-            st.session_state.transcript_files,
-            key="subtitle_transcript_select",
-            label_visibility="collapsed"
-        )
+        st.markdown("### 2. 选择字幕")
         
-        if selected_transcript:
-            # 预览字幕文件内容
-            transcript_path = os.path.join(server.TRANSCRIPTS_DIR, selected_transcript)
-            try:
-                with open(transcript_path, 'r', encoding='utf-8') as f:
-                    transcript_data = json.load(f)
-                st.info(f"📄 包含 {len(transcript_data)} 条字幕")
-            except:
-                pass
+        transcript_options = []
+        if st.session_state.transcript_files:
+            for f in st.session_state.transcript_files:
+                transcript_options.append(f['name'])
+        
+        video_md5 = server.get_file_hash(os.path.join(server.INPUT_VIDEO_DIR, selected_video))
+        if video_md5:
+            cache_path = os.path.join(server.GLOBAL_CACHE_DIR, video_md5, "raw_trans.json")
+            if os.path.exists(cache_path):
+                transcript_options.append(f"[缓存] {video_md5[:8]}_raw_trans.json")
+        
+        if transcript_options:
+            selected_transcript = st.selectbox(
+                "选择字幕文件",
+                transcript_options,
+                key="subtitle_transcript_select"
+            )
+        else:
+            st.warning("没有找到字幕文件")
+            selected_transcript = None
     
-    st.markdown("---")
     st.markdown("### 3. 字幕样式")
     
-    # 使用两列布局来避免颜色选择器问题
     col1, col2 = st.columns(2)
-    
     with col1:
-        # 字体颜色 - 使用标准的6位十六进制
-        font_color = st.color_picker(
-            "字体颜色", 
-            "#FFFFFF",
-            help="选择字幕文字颜色"
-        )
-        
-        # 字体大小
-        font_size = st.slider(
-            "字体大小", 
-            min_value=12, 
-            max_value=72, 
-            value=36,
-            step=2
-        )
+        font_color = st.color_picker("字体颜色", "#FFFFFF")
+        font_size = st.slider("字体大小", 12, 72, 36)
     
     with col2:
-        # 背景颜色 - 使用标准的6位十六进制，不带透明度
-        bg_color = st.color_picker(
-            "背景颜色", 
-            "#000000",
-            help="选择字幕背景颜色"
-        )
-        
-        # 背景透明度 - 单独控制
-        bg_opacity = st.slider(
-            "背景透明度", 
-            min_value=0, 
-            max_value=100, 
-            value=50,
-            step=5,
-            help="0=完全透明, 100=完全不透明"
-        )
-        
-        # 字幕位置
-        position = st.select_slider(
-            "字幕位置",
-            options=["顶部", "中部", "底部"],
-            value="底部"
-        )
+        bg_color = st.color_picker("背景颜色", "#000000")
+        bg_opacity = st.slider("背景透明度", 0, 100, 50)
+        position = st.select_slider("位置", options=["顶部", "中部", "底部"], value="底部")
     
-    # 字幕样式预览
-    st.markdown("### 4. 样式预览")
-    
-    # 计算带透明度的背景颜色
-    opacity_hex = hex(int(bg_opacity * 255 / 100))[2:].zfill(2)
-    bg_color_with_alpha = f"{bg_color}{opacity_hex}"
-    
-    # 显示预览
-    st.markdown(f"""
-    <div class="subtitle-preview" style="background: #1e1e2f;">
-        <div class="preview-text" style="
-            font-size: {font_size}px;
-            color: {font_color};
-            background-color: {bg_color_with_alpha};
-            padding: 10px 20px;
-            border-radius: 5px;
-            text-align: center;
-            margin: 0 auto;
-            display: inline-block;
-            position: relative;
-            {'top: 20px;' if position == '顶部' else ''}
-            {'top: 50%; transform: translateY(-50%);' if position == '中部' else ''}
-            {'bottom: 20px;' if position == '底部' else ''}
-        ">
-            字幕样式预览示例
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # 开始处理
     if st.button("✨ 生成字幕视频", use_container_width=True, type="primary"):
-        if not selected_video or not selected_transcript:
-            st.error("请选择视频和字幕文件")
-        else:
+        if selected_video and selected_transcript:
             with st.spinner("正在添加字幕..."):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # 模拟进度
-                steps = ["加载视频", "处理字幕", "渲染字幕", "生成输出"]
-                for i, step in enumerate(steps):
-                    status_text.text(f"{step}...")
-                    progress_bar.progress((i + 1) * 25)
-                    time.sleep(1.5)
-                
-                # 构建样式参数
-                style = {
-                    "font_size": font_size,
-                    "font_color": font_color,
-                    "bg_color": bg_color_with_alpha,  # 带透明度的颜色
-                    "position": position
-                }
-                
-                # 调用server函数
                 result = server.add_subtitles_to_video(
                     video_filename=selected_video,
-                    transcript_filename=selected_transcript
+                    transcript_filename=selected_transcript if not selected_transcript.startswith("[缓存]") else None
                 )
                 
                 if result["success"]:
                     st.success(f"✅ {result['message']}")
-                    
-                    # 显示结果
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("视频文件", selected_video)
-                    with col2:
-                        if result.get("output_path"):
-                            st.metric("输出文件", os.path.basename(result["output_path"]))
-                    
+                    if result.get("output_path") and os.path.exists(result["output_path"]):
+                        st.video(result["output_path"])
                     st.balloons()
-                    refresh_file_lists()
                 else:
                     st.error(f"❌ {result['message']}")
     
@@ -785,23 +1100,22 @@ def page_add_subtitles():
 # 主函数
 def main():
     init_session_state()
-    refresh_file_lists()
+    refresh_data()
     
-    # 渲染侧边栏
     render_sidebar()
     
-    # 主要内容区域
     st.markdown(f'<h1 style="text-align: center; color: #1e1e2f;">🎬 {st.session_state.current_page}</h1>', 
                 unsafe_allow_html=True)
     
-    # 根据当前页面显示内容
-    if st.session_state.current_page == "数据准备":
+    if st.session_state.current_page == "资产中心":
+        page_asset_center()
+    elif st.session_state.current_page == "数据准备":
         page_data_processing()
     elif st.session_state.current_page == "RAG构建":
         page_rag_building()
     elif st.session_state.current_page == "智能剪辑":
         page_video_editing()
-    elif st.session_state.current_page == "横屏转竖屏":
+    elif st.session_state.current_page == "竖屏转换":
         page_convert_to_vertical()
     elif st.session_state.current_page == "添加字幕":
         page_add_subtitles()
