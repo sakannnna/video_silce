@@ -1092,7 +1092,8 @@ def video_editing(video_filename: str,
 
 def convert_to_vertical(video_filename: str, method: str = "solid") -> Dict[str, Any]:
     """
-    横屏转竖屏功能
+    横屏转竖屏功能 - 使用原名作为输出文件名
+    支持传入MD5格式或原始文件名
     """
     result = {
         "success": False,
@@ -1103,17 +1104,42 @@ def convert_to_vertical(video_filename: str, method: str = "solid") -> Dict[str,
     try:
         logger.info("开始执行横屏转竖屏功能")
         
-        video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
-        if not os.path.exists(video_path):
-            result["message"] = f"视频文件不存在: {video_path}"
-            return result
+        # 解析文件名
+        base_name = os.path.splitext(video_filename)[0]
+        ext = os.path.splitext(video_filename)[1]
         
-        video_name = os.path.splitext(video_filename)[0]
-        safe_name = safe_filename(video_name)
+        # 判断是否为MD5格式
+        is_md5 = len(base_name) == 32 and all(c in '0123456789abcdef' for c in base_name.lower())
+        
+        video_path = None
+        original_name = None
+        
+        if is_md5:
+            # 情况1：传入的是MD5格式
+            video_info = get_video_path_by_md5(base_name)
+            if not video_info or not video_info['exists']:
+                result["message"] = f"视频池中未找到视频: {base_name}"
+                return result
+            video_path = video_info['path']
+            original_name = video_info.get('original_name', base_name + ext)
+        else:
+            # 情况2：传入的是原始文件名
+            input_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
+            if not os.path.exists(input_path):
+                result["message"] = f"输入目录中未找到视频文件: {input_path}"
+                return result
+            video_path = input_path
+            original_name = video_filename
+        
+        # 获取原名（不含扩展名）
+        original_name_without_ext = os.path.splitext(original_name)[0]
+        safe_name = safe_filename(original_name_without_ext)
+        
+        # 生成输出文件名 - 使用原名
         output_filename = f"{safe_name}_vertical.mp4"
         output_path = os.path.join(VERTICAL_VIDEO_DIR, output_filename)
         
-        logger.info(f"转换视频: {video_filename}, 方法: {method}")
+        logger.info(f"转换视频: {original_name}, 方法: {method}, 输出: {output_filename}")
         
         video_processor = VideoProcessor()
         success = video_processor.convert_to_vertical(video_path, output_path, method=method)
@@ -1136,7 +1162,8 @@ def convert_to_vertical(video_filename: str, method: str = "solid") -> Dict[str,
 def add_subtitles_to_video(video_filename: str, 
                           transcript_filename: Optional[str] = None) -> Dict[str, Any]:
     """
-    为视频添加字幕功能
+    为视频添加字幕功能 - 使用原名作为输出文件名
+    支持传入MD5格式或原始文件名
     """
     result = {
         "success": False,
@@ -1147,34 +1174,54 @@ def add_subtitles_to_video(video_filename: str,
     try:
         logger.info("开始执行为视频添加字幕功能")
         
-        video_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
-        if not os.path.exists(video_path):
-            result["message"] = f"视频文件不存在: {video_path}"
+        video_path = None
+        original_name = None
+        video_md5 = None
+        
+        
+        input_path = os.path.join(INPUT_VIDEO_DIR, video_filename)
+        if not os.path.exists(input_path):
+            result["message"] = f"输入目录中未找到视频文件: {input_path}"
             return result
+        video_path = input_path
+        original_name = video_filename
+        # 计算MD5以便查找资产缓存中的字幕
+        video_md5 = get_file_hash(video_path)
         
-        video_name = os.path.splitext(video_filename)[0]
-        safe_name = safe_filename(video_name)
+        # 获取原名（不含扩展名）
+        original_name_without_ext = os.path.splitext(original_name)[0]
+        safe_name = safe_filename(original_name_without_ext)
         
-        if not transcript_filename:
-            transcript_filename = f"{safe_name}_transcript.json"
-        
-        transcript_path = os.path.join(TRANSCRIPTS_DIR, transcript_filename)
-        
-        if not os.path.exists(transcript_path):
-            video_md5 = get_file_hash(video_path)
+        # 确定字幕文件路径
+        transcript_path = None
+        if transcript_filename:
+            # 如果指定了字幕文件名，直接拼接路径
+            candidate = os.path.join(TRANSCRIPTS_DIR, transcript_filename)
+            if os.path.exists(candidate):
+                transcript_path = candidate
+            else:
+                result["message"] = f"指定的字幕文件不存在: {candidate}"
+                return result
+        else:
+            # 未指定字幕文件，尝试从资产缓存中查找
             if video_md5:
-                cache_path = os.path.join(GLOBAL_CACHE_DIR, video_md5, "raw_trans.json")
+                cache_dir = os.path.join(GLOBAL_CACHE_DIR, video_md5)
+                cache_path = os.path.join(cache_dir, "raw_trans.json")
                 if os.path.exists(cache_path):
                     transcript_path = cache_path
+            # 如果缓存中找不到，尝试从 transcripts 目录查找
+            if transcript_path is None:
+                candidate = os.path.join(TRANSCRIPTS_DIR, f"{safe_name}_transcript.json")
+                if os.path.exists(candidate):
+                    transcript_path = candidate
+            
+            if transcript_path is None:
+                result["message"] = f"未找到对应的字幕文件，请先进行数据准备或指定字幕文件"
+                return result
         
-        if not os.path.exists(transcript_path):
-            result["message"] = f"转录文件不存在: {transcript_path}"
-            return result
-        
+        # 调用 VideoProcessor 添加字幕
         output_filename = f"{safe_name}_with_subtitles.mp4"
         output_path = os.path.join(OUTPUT_VIDEO_DIR, output_filename)
-        
-        logger.info(f"为视频添加字幕: {video_filename}")
         
         video_processor = VideoProcessor()
         success = video_processor.add_subtitles(video_path, transcript_path, output_path)
@@ -1377,4 +1424,5 @@ __all__ = [
     'GLOBAL_CACHE_DIR',
     'LIBRARIES_DIR',
     'SLICE_CACHE_DIR'
+
 ]
