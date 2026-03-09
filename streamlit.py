@@ -669,15 +669,26 @@ def page_rag_building():
             selected_md5s = [asset_options[name] for name in selected_display_names]
             
             if st.button("🔗 关联选中资产"):
+                # 改进：添加状态文本和进度条
+                status_text = st.empty()
+                status_text.text(f"正在关联资产... 0/{len(selected_md5s)}")
                 progress_bar = st.progress(0)
+                
                 for i, md5 in enumerate(selected_md5s):
+                    # 更新状态：当前处理的资产名称
+                    status_text.text(f"正在关联资产: {selected_display_names[i]} ({i+1}/{len(selected_md5s)})")
+                    
                     result = server.add_asset_to_library(st.session_state.selected_lib, md5)
                     if result['success']:
                         st.toast(f"✅ 已关联: {selected_display_names[i]}")
                     else:
                         st.error(f"❌ 关联失败: {result['message']}")
+                    
+                    # 更新进度条
                     progress_bar.progress((i + 1) / len(selected_md5s))
                 
+                # 操作完成，更新状态
+                status_text.text("关联完成！正在刷新数据...")
                 refresh_data()
                 st.rerun()
         else:
