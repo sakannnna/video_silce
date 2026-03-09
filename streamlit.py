@@ -858,7 +858,7 @@ def page_rag_building():
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 页面: 智能剪辑
+# 视频剪辑
 def page_video_editing():
     st.markdown('<div class="content-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">✂️ 智能视频剪辑</div>', unsafe_allow_html=True)
@@ -874,13 +874,15 @@ def page_video_editing():
     
     asset_options = {}
     for md5, info in assets.items():
+        # 使用 display_name 作为原始文件名
         display_name = info.get('display_name', info.get('filename', md5))
         if not info.get('exists', True):
             display_name = f"⚠️ {display_name} (视频缺失)"
         asset_options[display_name] = {
             'md5': md5,
             'path': info.get('path'),
-            'filename': info.get('filename'),
+            'filename': info.get('filename'),      # MD5 文件名（备用）
+            'display_name': info.get('display_name', info.get('filename', md5)),  # 原始文件名
             'exists': info.get('exists', False)
         }
     
@@ -889,8 +891,8 @@ def page_video_editing():
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.markdown("### 1. 选择视频")
-        selected_display = st.selectbox(
+        st.markdown("### 1. 选择视频（可多选）")
+        selected_displays = st.multiselect(
             "选择要剪辑的视频",
             options=sorted_display_names,
             key="edit_asset_select",
@@ -898,16 +900,17 @@ def page_video_editing():
             format_func=lambda x: x
         )
         
-        selected_asset = asset_options[selected_display]
-        selected_md5 = selected_asset['md5']
-        asset_path = selected_asset['path']
-        
-        if asset_path and os.path.exists(asset_path):
-            st.video(asset_path)
-        elif selected_asset.get('exists'):
-            st.error(f"视频文件不存在: {asset_path}")
+        # 预览第一个选中的视频
+        if selected_displays:
+            first_display = selected_displays[0]
+            selected_asset = asset_options[first_display]
+            asset_path = selected_asset['path']  # 可能是视频池路径，仅用于预览
+            if asset_path and os.path.exists(asset_path):
+                st.video(asset_path)
+            else:
+                st.warning("视频文件缺失，无法预览")
         else:
-            st.warning("视频文件缺失，请运行迁移工具")
+            st.info("👆 请从上方选择至少一个视频")
     
     with col2:
         st.markdown("### 2. 剪辑参数")
@@ -920,44 +923,91 @@ def page_video_editing():
         height=100
     )
     
-    if st.button("🎬 开始智能剪辑", use_container_width=True, type="primary"):
+    btn_label = "🎬 开始智能剪辑"
+    if selected_displays:
+        btn_label = f"🎬 批量剪辑 {len(selected_displays)} 个视频"
+    
+    # 使用 width='stretch' 替代 use_container_width=True
+    if st.button(btn_label, width='stretch', type="primary"):
         if not instruction:
             st.error("请输入剪辑要求")
-        elif not selected_md5:
-            st.error("请选择视频")
+        elif not selected_displays:
+            st.error("请至少选择一个视频")
         else:
-            with st.spinner("正在剪辑视频..."):
-                video_filename = selected_asset['filename']
-                if not os.path.exists(os.path.join(server.INPUT_VIDEO_DIR, video_filename)):
-                    for ext in ['.mp4', '.mov', '.avi', '.mkv']:
-                        pool_path = os.path.join(server.VIDEO_POOL_DIR, f"{selected_md5}{ext}")
-                        if os.path.exists(pool_path):
-                            video_filename = f"{selected_md5}{ext}"
-                            break
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            results = []
+            
+            total = len(selected_displays)
+            for i, display_name in enumerate(selected_displays):
+                status_text.text(f"正在处理 ({i+1}/{total}): {display_name}")
+                asset = asset_options[display_name]
+                md5 = asset['md5']
+                original_filename = asset['display_name']  # 原始文件名
                 
+                # 检查原始文件是否存在于 INPUT_VIDEO_DIR
+                input_video_path = os.path.join(server.INPUT_VIDEO_DIR, original_filename)
+                if not os.path.exists(input_video_path):
+                    # 如果原始文件不存在，则记录失败
+                    results.append({
+                        "video": display_name,
+                        "success": False,
+                        "message": f"原始视频文件不存在: {input_video_path}",
+                        "output_path": None,
+                        "segments": [],
+                        "selected_segments": [],
+                        "total_duration": 0
+                    })
+                    progress_bar.progress((i + 1) / total)
+                    continue
+                
+                # 调用 server.video_editing，传入原始文件名
                 result = server.video_editing(
-                    video_filename=video_filename,
+                    video_filename=original_filename,
                     user_instruction=instruction,
                     max_duration=max_duration
                 )
                 
-                if result["success"]:
-                    st.success(f"✅ {result['message']}")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("原始片段", len(result.get("segments", [])))
-                    with col2:
-                        st.metric("选中片段", len(result.get("selected_segments", [])))
-                    with col3:
-                        st.metric("总时长", f"{result.get('total_duration', 0):.1f}秒")
-                    
-                    if result.get("output_path") and os.path.exists(result["output_path"]):
-                        st.video(result["output_path"])
-                    
-                    st.balloons()
-                else:
-                    st.error(f"❌ {result['message']}")
+                results.append({
+                    "video": display_name,
+                    "success": result.get("success", False),
+                    "message": result.get("message", ""),
+                    "output_path": result.get("output_path"),
+                    "segments": result.get("segments", []),
+                    "selected_segments": result.get("selected_segments", []),
+                    "total_duration": result.get("total_duration", 0)
+                })
+                
+                progress_bar.progress((i + 1) / total)
+            
+            status_text.text("批量处理完成！")
+            success_count = sum(1 for r in results if r["success"])
+            st.success(f"✅ 处理完成，成功 {success_count} 个，失败 {total - success_count} 个")
+            
+            # 展示结果表格
+            import pandas as pd
+            df = pd.DataFrame(results)
+            df['output_file'] = df['output_path'].apply(lambda x: os.path.basename(x) if x else '')
+            df_display = df[['video', 'success', 'message', 'output_file']]
+            st.dataframe(df_display, use_container_width=True)
+            
+            # 预览成功生成的视频
+            with st.expander("查看成功生成的视频预览"):
+                for res in results:
+                    if res["success"] and res.get("output_path") and os.path.exists(res["output_path"]):
+                        st.markdown(f"**{res['video']}**")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("原始片段", len(res.get("segments", [])))
+                        with col2:
+                            st.metric("选中片段", len(res.get("selected_segments", [])))
+                        with col3:
+                            st.metric("总时长", f"{res.get('total_duration', 0):.1f}秒")
+                        st.video(res["output_path"])
+                        st.markdown("---")
+            
+            if success_count > 0:
+                st.balloons()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
