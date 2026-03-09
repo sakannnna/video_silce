@@ -673,27 +673,28 @@ class VideoProcessor:
 
     def add_subtitles(self, video_path, transcript_path, output_path, font_path=None):
         """
-        为视频添加字幕
-        参数Args:
+        为视频添加字幕（提速版，保留原版路径处理逻辑）
+        参数:
             video_path: 输入视频路径
             transcript_path: 转录文件路径（JSON格式）
             output_path: 输出视频路径
-            font_path: 字体文件路径（可选）
-        返回Returns:
+            font_path: 字体文件路径（可选，当前未使用）
+        返回:
             bool: 是否成功
         """
         try:
             import json
             import subprocess
             import os
-            
+            import tempfile
+
             # 确保输出目录存在
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
+
             # 读取转录文件
             with open(transcript_path, 'r', encoding='utf-8') as f:
                 transcript = json.load(f)
-            
+
             # 获取 FFmpeg 路径
             try:
                 import imageio_ffmpeg
@@ -702,94 +703,130 @@ class VideoProcessor:
             except ImportError:
                 print("错误: imageio_ffmpeg 不可用，请安装该包")
                 return False
-            
-            # 使用 FFmpeg 添加字幕（生成 SRT 文件）
-            try:
-                # 准备字幕数据
-                subtitles_data = []
-                for item in transcript:
-                    if isinstance(item, dict):
-                        # 兼容不同格式的转录数据
-                        if 'content' in item and 'time_range' in item:
-                            text = item['content']
-                            time_range = item['time_range']
-                            if isinstance(time_range, list) and len(time_range) >= 2:
-                                start = time_range[0]
-                                end = time_range[1]
-                                if text and end > start:
-                                    subtitles_data.append(((start, end), text))
-                        elif 'word' in item and 'start' in item and 'end' in item:
-                            text = item['word']
-                            start = item['start']
-                            end = item['end']
+
+            # ==================== 准备字幕数据 ====================
+            subtitles_data = []
+            for item in transcript:
+                if isinstance(item, dict):
+                    if 'content' in item and 'time_range' in item:
+                        text = item['content']
+                        time_range = item['time_range']
+                        if isinstance(time_range, list) and len(time_range) >= 2:
+                            start = time_range[0]
+                            end = time_range[1]
                             if text and end > start:
                                 subtitles_data.append(((start, end), text))
-                
-                if not subtitles_data:
-                    print("警告: 未找到有效的字幕数据")
-                    return False
-                
-                # 生成 SRT 字幕文件
-                import tempfile
-                # 将 SRT 文件放在与输入视频相同的目录中，使用相对路径
-                srt_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_temp.srt"
-                srt_path = os.path.join(os.path.dirname(video_path), srt_filename)
-                
+                    elif 'word' in item and 'start' in item and 'end' in item:
+                        text = item['word']
+                        start = item['start']
+                        end = item['end']
+                        if text and end > start:
+                            subtitles_data.append(((start, end), text))
+
+            if not subtitles_data:
+                print("警告: 未找到有效的字幕数据")
+                return False
+
+            # 按起始时间排序
+            subtitles_data.sort(key=lambda x: x[0][0])
+
+            # ==================== 生成临时 SRT 字幕文件（放在视频目录）====================
+            video_dir = os.path.dirname(video_path)
+            # 使用临时文件创建唯一 srt 文件，避免并发冲突
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.srt',
+                dir=video_dir,
+                delete=False,
+                encoding='utf-8'
+            ) as tmp_srt:
+                srt_filename = os.path.basename(tmp_srt.name)  # 仅文件名，用于相对路径
+                srt_path = tmp_srt.name                        # 完整路径，用于后续删除
+
                 def format_time(seconds):
-                    """将秒转换为 SRT 时间格式 HH:MM:SS,mmm"""
                     hours = int(seconds // 3600)
                     minutes = int((seconds % 3600) // 60)
                     secs = int(seconds % 60)
                     millis = int((seconds % 1) * 1000)
                     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-                
-                with open(srt_path, 'w', encoding='utf-8') as f:
-                    for i, ((start, end), text) in enumerate(subtitles_data, 1):
-                        f.write(f"{i}\n")
-                        f.write(f"{format_time(start)} --> {format_time(end)}\n")
-                        f.write(f"{text}\n\n")
-                
-                print(f"已生成 SRT 字幕文件: {srt_path}")
-                
-                # 使用 FFmpeg 添加字幕
-                # 使用相对路径，避免路径解析问题
-                video_dir = os.path.dirname(video_path)
-                os.chdir(video_dir)
-                relative_srt_path = srt_filename
-                
-                # 使用 subtitles 滤镜，它会自动处理字体
-                cmd = [
-                    ffmpeg_exe, "-y",
-                    "-i", os.path.basename(video_path),
-                    "-vf", f"subtitles='{relative_srt_path}':force_style='Fontsize=36,PrimaryColour=&H00FFFFFF,Alignment=2,MarginV=80'",
-                    "-c:a", "copy",
-                    "-c:v", "libx264",
-                    "-preset", "medium",
-                    "-crf", "23",
-                    output_path
+
+                for i, ((start, end), text) in enumerate(subtitles_data, 1):
+                    tmp_srt.write(f"{i}\n")
+                    tmp_srt.write(f"{format_time(start)} --> {format_time(end)}\n")
+                    tmp_srt.write(f"{text}\n\n")
+
+            print(f"已生成 SRT 字幕文件: {srt_path}")
+
+            # ==================== 检测最佳编码器（硬件加速优先）====================
+            def detect_best_encoder():
+                """检测可用的硬件编码器，返回编码器名称和对应质量参数"""
+                encoders_to_check = [
+                    ("h264_nvenc", "cq"),      # NVIDIA
+                    ("h264_amf", "quality"),   # AMD
+                    ("h264_qsv", "global_quality"),  # Intel
+                    ("libx264", "crf")         # 软件编码 fallback
                 ]
-                
-                print(f"正在使用 FFmpeg 添加字幕...")
-                subprocess.run(cmd, check=True)
-                
-                # 删除临时 SRT 文件
-                try:
-                    os.remove(srt_path)
-                except:
-                    pass
-                
-                print(f"✓ 字幕添加完成: {output_path}")
-                return True
-                
-            except ImportError as e:
-                print(f"MoviePy 导入失败: {e}")
-                return False
-            except Exception as e:
-                print(f"使用 MoviePy 添加字幕失败: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
-                
+                for enc, qual_param in encoders_to_check:
+                    try:
+                        result = subprocess.run(
+                            [ffmpeg_exe, "-encoders"],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if enc in result.stdout:
+                            print(f"检测到可用编码器: {enc}")
+                            return enc, qual_param
+                    except:
+                        continue
+                return "libx264", "crf"
+
+            video_encoder, quality_param = detect_best_encoder()
+
+            # 根据编码器设置最快编码参数
+            encode_params = []
+            if video_encoder == "libx264":
+                # 软件编码：使用 ultrafast 预设，CRF 30（速度极快）
+                encode_params = ["-preset", "ultrafast", "-crf", "30"]
+            elif video_encoder == "h264_nvenc":
+                # NVIDIA 硬件编码：使用 p1（最快预设），cq 值 30
+                encode_params = ["-preset", "p1", "-cq", "30"]
+            elif video_encoder == "h264_amf":
+                # AMD 硬件编码：quality 值 0-9，数值越低越快；这里用 0（最快）
+                encode_params = ["-quality", "0", "-rc", "cqp", "-qp_i", "30", "-qp_p", "30"]
+            elif video_encoder == "h264_qsv":
+                # Intel 硬件编码：使用 fastest 预设，global_quality 30
+                encode_params = ["-preset", "fastest", "-global_quality", "30"]
+            else:
+                encode_params = ["-preset", "ultrafast", "-crf", "30"]
+
+            # 添加多线程参数（自动使用所有 CPU 核心）
+            encode_params.extend(["-threads", "auto"])
+
+            # ==================== 构建 FFmpeg 命令 ====================
+            # 使用 cwd 参数将工作目录设为视频目录，这样字幕文件可通过相对路径访问
+            # 视频输入使用绝对路径（在 cwd 下依然有效）
+            cmd = [
+                ffmpeg_exe, "-y",
+                "-i", video_path,
+                "-vf", f"subtitles='{srt_filename}':force_style='Fontsize=36,PrimaryColour=&H00FFFFFF,Alignment=2,MarginV=80'",
+                "-c:a", "copy",
+                "-c:v", video_encoder,
+            ] + encode_params + [output_path]
+
+            print(f"正在使用编码器 {video_encoder} 添加字幕...")
+            subprocess.run(cmd, check=True, cwd=video_dir)  # 设置工作目录为视频目录
+
+            # 删除临时 SRT 文件
+            try:
+                os.remove(srt_path)
+            except:
+                pass
+
+            print(f"✓ 字幕添加完成: {output_path}")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg 执行失败: {e}")
+            return False
         except Exception as e:
             print(f"添加字幕失败: {e}")
             import traceback
