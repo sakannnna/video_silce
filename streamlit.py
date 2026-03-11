@@ -98,13 +98,23 @@ st.markdown("""
         box-shadow: 0 10px 30px rgba(0,0,0,0.1);
         margin-bottom: 20px;
     }
+
     .section-title {
-        color: #1e1e2f;
-        font-size: 24px;
-        font-weight: bold;
+        font-size: 26px;
+        font-weight: 700;
+        color: #1e293b;
         margin-bottom: 20px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #667eea;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .section-title::after {
+        content: '';
+        flex: 1;
+        height: 2px;
+        background: linear-gradient(90deg, #667eea, transparent);
+        margin-left: 20px;
     }
     
     .result-card {
@@ -119,19 +129,66 @@ st.markdown("""
         background: linear-gradient(90deg, #667eea, #764ba2);
     }
     
+    /* ===== 按钮样式 ===== */
     .stButton > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        font-weight: bold;
         border: none;
-        padding: 10px 25px;
-        border-radius: 25px;
-        transition: all 0.3s;
+        border-radius: 16px;
+        padding: 12px 24px;
+        font-weight: 600;
+        font-size: 16px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
         width: 100%;
+        position: relative;
+        overflow: hidden;
     }
+    
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+    
+    .stButton > button::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 0;
+        height: 0;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.3);
+        transform: translate(-50%, -50%);
+        transition: width 2s, height 0.6s;
+    }
+    
+    .stButton > button:not(:hover)::after {
+    width: 0 !important;        /* 鼠标移开时立即消失 */
+    height: 0 !important;
+    transition: none;           /* 移开时无过渡动画 */
+    }
+    
+    .stButton > button:hover::after {
+        width: 2000px;
+        height: 300px;
+    }
+    
+    /* 次级按钮 */
+    .stButton > button.secondary {
+        background: white;
+        color: #667eea;
+        border: 2px solid #667eea;
+        box-shadow: none;
+    }
+    
+    .stButton > button.secondary:hover {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
     }
     
     .file-item {
@@ -392,60 +449,115 @@ def render_sidebar():
 
 # 页面: 资产中心
 def page_asset_center():
-    st.markdown('<div class="content-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">🏭 资产中心 - 全局资产池</div>', unsafe_allow_html=True)
+    st.markdown('<div class="modern-card">', unsafe_allow_html=True)
+    
+    # 标题
+    st.markdown("""
+    <div class="section-title">
+        <span>🏭 资产中心</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.markdown("全局资产池存储所有视频及其分析结果，是SSOT的核心")
     
     if not st.session_state.global_assets:
-        st.info("全局资产池为空，请先上传视频")
+        st.info("✨ 全局资产池为空，请先上传视频")
     else:
-        st.markdown(f"**共 {len(st.session_state.global_assets)} 个资产**")
+        # 统计卡片
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown("""
+            <div class="metric-card">
+                <div class="metric-icon">📹</div>
+                <div class="metric-value">{}</div>
+                <div class="metric-label">总资产</div>
+            </div>
+            """.format(len(st.session_state.global_assets)), unsafe_allow_html=True)
         
+        with col2:
+            asr_count = sum(1 for a in st.session_state.global_assets if a.get('has_asr'))
+            st.markdown("""
+            <div class="metric-card">
+                <div class="metric-icon">🎤</div>
+                <div class="metric-value">{}</div>
+                <div class="metric-label">ASR完成</div>
+            </div>
+            """.format(asr_count), unsafe_allow_html=True)
+        
+        with col3:
+            cleaned_count = sum(1 for a in st.session_state.global_assets if a.get('has_cleaned'))
+            st.markdown("""
+            <div class="metric-card">
+                <div class="metric-icon">✨</div>
+                <div class="metric-value">{}</div>
+                <div class="metric-label">清洗完成</div>
+            </div>
+            """.format(cleaned_count), unsafe_allow_html=True)
+        
+        with col4:
+            total_size = sum(os.path.getsize(a['path']) for a in st.session_state.global_assets if os.path.exists(a['path'])) / (1024**3)
+            st.markdown("""
+            <div class="metric-card">
+                <div class="metric-icon">💾</div>
+                <div class="metric-value">{:.2f}</div>
+                <div class="metric-label">总大小(GB)</div>
+            </div>
+            """.format(total_size), unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # 资产列表
         for asset in st.session_state.global_assets:
             with st.expander(f"📹 {asset.get('display_name', asset.get('filename', '未知'))}"):
-                col1, col2, col3 = st.columns([2, 1, 1])
+                col1, col2 = st.columns([2, 1])
                 
                 with col1:
                     st.markdown(f"""
-                    **MD5:** `{asset['md5']}`  
+                    **MD5:** `{asset['md5'][:8]}...{asset['md5'][-8:]}`  
                     **原名:** {asset.get('display_name', '未知')}  
-                    **大小:** {asset.get('size_formatted', '未知') if 'size_formatted' in asset else server.format_size(os.path.getsize(asset['path']) if os.path.exists(asset['path']) else 0)}
+                    **大小:** {asset.get('size_formatted', '未知')}
                     """)
                 
                 with col2:
-                    st.markdown("**分析状态:**")
+                    # 状态徽章
+                    status_html = ""
                     if asset.get('has_asr'):
-                        st.markdown("✅ ASR完成")
+                        status_html += '<span class="badge badge-success">✓ ASR完成</span> '
                     else:
-                        st.markdown("⏳ ASR待处理")
+                        status_html += '<span class="badge badge-warning">⏳ ASR待处理</span> '
                     
                     if asset.get('has_cleaned'):
-                        st.markdown("✅ 清洗完成")
+                        status_html += '<span class="badge badge-success">✓ 清洗完成</span>'
                     else:
-                        st.markdown("⏳ 清洗待处理")
-                
-                with col3:
-                    if st.button("📋 详情", key=f"detail_{asset['md5']}"):
-                        asset_info = server.get_asset_info(asset['md5'])
-                        if asset_info['success']:
-                            st.session_state['current_asset'] = asset_info['asset_info']
-                            st.rerun()
+                        status_html += '<span class="badge badge-warning">⏳ 清洗待处理</span>'
                     
-                    if st.button("🗑️ 删除", key=f"delete_{asset['md5']}"):
-                        result = server.delete_asset(asset['md5'])
-                        if result['success']:
-                            st.success(f"✅ {result['message']}")
-                            refresh_data()
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {result['message']}")
+                    st.markdown(f"**状态:** {status_html}", unsafe_allow_html=True)
+                    
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        if st.button("📋 详情", key=f"detail_{asset['md5']}", use_container_width=True):
+                            asset_info = server.get_asset_info(asset['md5'])
+                            if asset_info['success']:
+                                st.session_state['current_asset'] = asset_info['asset_info']
+                                st.rerun()
+                    
+                    with col_b:
+                        if st.button("🗑️ 删除", key=f"delete_{asset['md5']}", use_container_width=True):
+                            result = server.delete_asset(asset['md5'])
+                            if result['success']:
+                                st.success(f"✅ {result['message']}")
+                                refresh_data()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {result['message']}")
     
     st.markdown('</div>', unsafe_allow_html=True)
     
+    # 资产详情
     if 'current_asset' in st.session_state:
         asset = st.session_state['current_asset']
-        st.markdown('<div class="content-card">', unsafe_allow_html=True)
-        st.markdown(f"### 资产详情: {asset.get('original_name', asset['md5'])}")
+        st.markdown('<div class="modern-card">', unsafe_allow_html=True)
+        st.markdown(f"### 📋 资产详情: {asset.get('original_name', asset['md5'])}")
         
         if not asset.get('video_exists', False):
             st.warning("⚠️ 视频文件不存在，请运行迁移工具")
@@ -489,11 +601,12 @@ def page_asset_center():
             else:
                 st.info("暂无缓存片段")
         
-        if st.button("关闭详情"):
+        if st.button("关闭详情", use_container_width=True):
             del st.session_state['current_asset']
             st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
+
 
 # 页面: 数据准备
 def page_data_processing():
