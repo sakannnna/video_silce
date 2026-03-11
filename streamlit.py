@@ -244,7 +244,7 @@ def refresh_data():
 # 侧边栏
 def render_sidebar():
     with st.sidebar:
-        st.markdown("## 🎬 SSOT 视频知识库")
+        st.image("logo.psd", width=500)
         st.markdown("---")
         
         st.markdown("### 📚 知识库管理")
