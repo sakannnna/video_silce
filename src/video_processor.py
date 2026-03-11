@@ -397,71 +397,47 @@ class VideoProcessor:
         selected_clips.sort(key=lambda x: x['start_time'])
         return selected_clips
 
-    
-    def combine_clips(self, clip_paths, output_filename="output_video.mp4"):
+    def combine_clips(self, clip_paths, output_path):
         """
-        组合片段并生成最终视频
-        参数Args:
-            clip_paths: 视频片段路径列表 (注意：这里为了兼容 main.py，第一个参数改为路径列表)
-            output_filename: 输出视频文件名或完整路径
-        返回Returns:
-            bool: 是否成功
+        使用 FFmpeg concat demuxer 合并视频片段，只启动一个进程
         """
         try:
-            clips = []
-            # 适配：如果传入的是路径列表（main.py 的调用方式）
-            if isinstance(clip_paths, list) and all(isinstance(p, str) for p in clip_paths):
-                 for path in clip_paths:
-                     try:
-                         clips.append(VideoFileClip(path))
-                     except Exception as e:
-                         print(f"Error loading clip {path}: {e}")
-            else:
-                 # 之前的逻辑是传入 video_path 和 segments，这里为了兼容 main.py 做了调整
-                 # 如果你需要保留之前的逻辑，可以加参数判断，但 main.py 传的是 clip_paths
-                 print("Error: combine_clips expects a list of file paths.")
-                 return False
+            # 创建 concat 文件列表
+            concat_file = os.path.join(os.path.dirname(output_path), "concat_list.txt")
+            with open(concat_file, 'w', encoding='utf-8') as f:
+                for path in clip_paths:
+                    # 使用绝对路径，确保安全
+                    abs_path = os.path.abspath(path).replace('\\', '/')
+                    f.write(f"file '{abs_path}'\n")
 
-            if not clips:
-                print("No valid clips to combine.")
-                return False
-            
-            # 组合片段
-            # 使用 method="compose" 可以避免因不同片段的参数微小差异导致的问题
-            final_clip = concatenate_videoclips(clips, method="compose")
-            
-            # 生成输出路径
-            # 如果 output_filename 已经是绝对路径，直接使用；否则拼接到 OUTPUT_VIDEO_DIR
-            if os.path.isabs(output_filename):
-                output_path = output_filename
-            else:
-                output_path = os.path.join(OUTPUT_VIDEO_DIR, output_filename)
-            
-            # 确保输出目录存在
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            # 获取 FFmpeg 路径
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
-            # 导出视频
-            final_clip.write_videofile(
-                output_path,
-                codec="libx264",
-                audio_codec="aac",
-                fps=30,
-                preset="medium",
-                threads=4,
-                logger=None
-            )
-            
-            # 关闭资源
-            for clip in clips:
-                clip.close()
-            final_clip.close()
-            
-            print(f"Video successfully generated: {output_path}")
+            # 构建命令：直接复制流，不重新编码
+            cmd = [
+                ffmpeg_exe, "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_file,
+                "-c", "copy",        # 关键：直接复制，无重编码
+                output_path
+            ]
+
+            print(f"合并命令: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True, capture_output=True)
+
+            # 删除临时文件
+            os.remove(concat_file)
             return True
-            
-        except Exception as e:
-            print(f"Error processing video: {e}")
+
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg 合并失败: {e.stderr.decode() if e.stderr else e}")
             return False
+        except Exception as e:
+            print(f"合并异常: {e}")
+            return False
+
     
     def process_video(self, video_path, analyzed_segments, max_duration=300, output_filename="output_video.mp4"):
         """
